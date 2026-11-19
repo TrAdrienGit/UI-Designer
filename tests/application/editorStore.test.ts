@@ -158,3 +158,47 @@ describe('EditorStore', () => {
     expect(s.getState()).toMatchObject({ canUndo: false, dirty: false, filePath: 'x.uidesign', selection: [] });
   });
 });
+
+describe('EditorStore: page regions, drawings, page size', () => {
+  it('applies preset overrides when creating an element', () => {
+    const s = store();
+    const id = s.addElement('container', { x: 0, y: 0, width: 1280, height: 80 }, null, 0, {
+      namePrefix: 'header',
+      style: { background: '#000000' },
+      props: { boxTag: 'header' },
+    });
+    expect(findElement(s.document, id)).toMatchObject({ name: 'header-1', style: { background: '#000000' }, props: { boxTag: 'header' } });
+  });
+
+  it('creates the page sketch on top of the page in one undo step', () => {
+    const s = store();
+    s.addElement('container', { x: 10, y: 10, width: 100, height: 100 });
+    const id = s.paintDrawing(null, 'data:image/png;base64,AA');
+    expect(s.document.elements[1]!.id).toBe(id);
+    expect(findElement(s.document, id)).toMatchObject({ type: 'drawing', name: 'sketch-1', x: 0, y: 0, width: 1280, height: 720 });
+    s.undo();
+    expect(findElement(s.document, id)).toBeUndefined();
+    expect(s.document.elements).toHaveLength(1);
+  });
+
+  it('stores strokes as separate undo steps and can grow the drawing', () => {
+    const s = store();
+    const id = s.paintDrawing(null, 'data:1');
+    s.paintDrawing(id, 'data:2');
+    s.paintDrawing(id, 'data:3', { x: 0, y: 0, width: 1280, height: 1500 });
+    expect(findElement(s.document, id)).toMatchObject({ height: 1500, props: { src: 'data:3' } });
+    s.undo();
+    expect(findElement(s.document, id)).toMatchObject({ height: 720, props: { src: 'data:2' } });
+    s.undo();
+    expect(findElement(s.document, id)!.props.src).toBe('data:1');
+  });
+
+  it('updates the fixed flag and the screen height', () => {
+    const s = store();
+    const id = s.addElement('container', { x: 0, y: 0, width: 100, height: 50 });
+    s.updateElement(id, { fixed: true });
+    expect(findElement(s.document, id)!.fixed).toBe(true);
+    s.updateCanvas({ height: 2000, viewportHeight: 3 });
+    expect(s.document.canvas).toMatchObject({ height: 2000, viewportHeight: 16 });
+  });
+});

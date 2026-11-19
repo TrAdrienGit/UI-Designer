@@ -1,7 +1,7 @@
 {
   "name": "ui-designer",
   "productName": "UI Designer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Desktop tool to draw web interfaces and HUDs visually and export them as a single, AI-friendly HTML file.",
   "license": "Unlicense",
   "author": "TrAdrienGit",

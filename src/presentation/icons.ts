@@ -20,6 +20,24 @@ const paths: Record<string, string> = {
   progress: '<rect x="2.5" y="9" width="19" height="6" rx="3"/><path d="M5 12h8" stroke-width="3"/>',
   slider: '<path d="M3 12h18"/><circle cx="14" cy="12" r="3.2" fill="var(--icon-bg, #2a2c33)"/>',
   divider: '<path d="M3 12h18"/><path d="M8 7h8M8 17h8" opacity=".45"/>',
+  video: '<rect x="2.5" y="5.5" width="19" height="13" rx="2"/><path d="M10 9.5v5l4.5-2.5z" fill="currentColor"/>',
+  drawing: '<rect x="3" y="4" width="18" height="16" rx="1.5" stroke-dasharray="3 2"/><path d="M7 15c2-4 4 1 6-3s3-1 4 0"/>',
+  header: '<rect x="3.5" y="4" width="17" height="16" rx="1.5"/><path d="M3.5 9h17" /><rect x="3.5" y="4" width="17" height="5" fill="currentColor" fill-opacity=".45"/>',
+  footer: '<rect x="3.5" y="4" width="17" height="16" rx="1.5"/><path d="M3.5 15h17"/><rect x="3.5" y="15" width="17" height="5" fill="currentColor" fill-opacity=".45"/>',
+  main: '<rect x="3.5" y="4" width="17" height="16" rx="1.5"/><rect x="6.5" y="7" width="11" height="10" rx="1" fill="currentColor" fill-opacity=".45"/>',
+  section: '<rect x="3.5" y="4" width="17" height="16" rx="1.5"/><path d="M3.5 10h17M3.5 15h17" stroke-dasharray="2 2"/>',
+  pencil: '<path d="M4 20l1.5-5L15 5.5l3.5 3.5L9 18.5z"/><path d="M13 7.5l3.5 3.5M4 20l3.5-1"/>',
+  brush: '<path d="M14 4.5l5.5 5.5-7 7-5.5-5.5z"/><path d="M7 11.5c-2.5 0-3.5 2-3.5 4 0 1.5-.5 3-1 4 3 0 7-1 7-5.5"/>',
+  eraser: '<path d="M8.5 19.5L3.5 14.5 13 5l6.5 6.5-8 8z"/><path d="M8.5 19.5h11M8 10l6.5 6.5"/>',
+  fill: '<path d="M5 11l6-6 7 7-6 6a2 2 0 01-2.8 0L5 13.8A2 2 0 015 11z"/><path d="M5 12h13M9 3l2 2"/><path d="M20 15s1.5 2 1.5 3a1.5 1.5 0 01-3 0c0-1 1.5-3 1.5-3z" fill="currentColor"/>',
+  line: '<path d="M5 19L19 5"/><circle cx="5" cy="19" r="1.5" fill="currentColor"/><circle cx="19" cy="5" r="1.5" fill="currentColor"/>',
+  rectangle: '<rect x="4" y="6" width="16" height="12"/>',
+  ellipse: '<ellipse cx="12" cy="12" rx="8.5" ry="6.5"/>',
+  picker: '<path d="M14.5 4.5a2.1 2.1 0 013 3L16 9l1 1-1.5 1.5-5-5L12 5l1 1z"/><path d="M11 8l-6.5 6.5L4 19l4.5-.5L15 12"/>',
+  link: '<path d="M10 14a4 4 0 005.7 0l3-3a4 4 0 00-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 00-5.7 0l-3 3a4 4 0 005.7 5.7l1-1"/>',
+  pin: '<path d="M9 4h6l-1 6 3 3H7l3-3z"/><path d="M12 13v7"/>',
+  swap: '<path d="M7 4L4 7l3 3"/><path d="M4 7h11a4 4 0 014 4v2"/><path d="M17 20l3-3-3-3"/><path d="M20 17H9a4 4 0 01-4-4v-2"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
   new: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M12 11v6M9 14h6"/>',
   open: '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v1H7l-4 9z"/><path d="M3 19l3.5-9H22l-3.5 9z"/>',
   save: '<path d="M5 3h11l3 3v15H5z"/><path d="M8 3v5h7V3M8 21v-7h8v7"/>',
@@ -65,4 +83,10 @@ export function icon(name: string, size = 18): string {
 export function typeIcon(type: string): string {
   if (type === 'pointer') return 'select';
   return type === 'select' ? 'select_' : type;
+}
+
+/** Icon of an element in the layers panel (semantic boxes get their region icon). */
+export function elementIcon(el: { readonly type: string; readonly props: { readonly boxTag: string } }): string {
+  if (el.type === 'container' && ['header', 'footer', 'main', 'section'].includes(el.props.boxTag)) return el.props.boxTag;
+  return typeIcon(el.type);
 }

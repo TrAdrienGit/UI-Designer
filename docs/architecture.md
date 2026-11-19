@@ -17,10 +17,10 @@ flowchart TD
 
 | Dossier | Rôle | Peut importer |
 | --- | --- | --- |
-| `src/domain` | Modèle immuable du document, opérations sur l'arbre, géométrie, catalogue des types d'éléments, correspondance élément → HTML/CSS. Aucune dépendance. | rien |
+| `src/domain` | Modèle immuable du document, opérations sur l'arbre, géométrie, catalogue des types d'éléments et des régions de page, correspondance élément → HTML/CSS, algorithmes de dessin sur tampons RGBA (`raster.ts` : tracé de ligne, pot de peinture). Aucune dépendance. | rien |
 | `src/application` | État de l'éditeur (`EditorStore`), annuler/rétablir (`History`), transformations (déplacer, redimensionner, aligner, grouper), cas d'usage fichiers (`ProjectService`), **ports** (interfaces `Logger`, `FileGateway`, `DocumentSerializer`…). | domain |
 | `src/infrastructure` | Implémentations des ports : export HTML, format `.uidesign`, logger et puits de logs (console, fichier, IPC), adaptateurs renderer (Electron / navigateur), contrat IPC. | domain, application |
-| `src/presentation` | Interface du renderer : canevas, interactions souris, panneaux, vues Aperçu/Code, commandes et raccourcis. `index.ts` est la racine de composition du renderer. | toutes |
+| `src/presentation` | Interface du renderer : canevas, interactions souris, outils de dessin (`paint/`), panneaux, vues Aperçu/Code, commandes et raccourcis. `index.ts` est la racine de composition du renderer. | toutes |
 | `src/main` | Process principal Electron : fenêtre, menu natif, dialogues, protocole d'aperçu, logs fichier. Racine de composition côté Node. | infrastructure, application (types) |
 | `src/preload` | Expose `window.uiDesigner` (API typée `DesktopApi`) au renderer isolé. | infrastructure (contrat) |
 
@@ -44,13 +44,25 @@ dans un même champ sont fusionnées (clé de fusion, fenêtre d'une seconde).
 
 ## Modèle
 
-- Un `UiDocument` contient le canevas (taille, fond, transparence), la grille et une liste
-  d'`UiElement`.
+- Un `UiDocument` contient le canevas (taille de page, hauteur d'écran, fond, image de fond,
+  transparence), la grille et une liste d'`UiElement`.
 - Un élément a un type (catalogue dans `domain/catalog.ts`), un nom (devient l'`id` HTML), une
   position `x/y` **relative à la boîte intérieure de son parent** (à l'intérieur de la bordure), une
   taille, un style commun, des propriétés propres au type et des enfants (boîtes uniquement).
 - Les coordonnées absolues (`absoluteRect`) servent à l'affichage, au test de clic et à
   l'aimantation ; le reparentage conserve la position à l'écran.
+- Un élément `fixed` (sans ancêtre fixe) est rendu en `position: fixed` à ses coordonnées de page.
+  Dans le canevas, le conteneur zoomé porte une transformation CSS : `fixed` s'y comporte comme
+  `absolute` par rapport à la page, si bien que le même code sert à l'éditeur et à l'export.
+
+## Dessin à main levée
+
+Un élément `drawing` stocke ses pixels dans `props.src` (PNG en data URL). Pendant un trait,
+`presentation/paint/paintController.ts` pose un `<canvas>` temporaire exactement à la place du calque
+dans le DOM du canevas (même ordre d'empilement), y peint avec l'API Canvas 2D (pinceau, gomme,
+formes) ou les algorithmes purs de `domain/raster.ts` (crayon au pixel, pot de peinture), puis
+enregistre le PNG par `EditorStore.paintDrawing` : **une étape d'annulation par trait**. Le dernier
+canevas peint est gardé en mémoire pour enchaîner les traits sans attendre le décodage du PNG.
 
 ## Rendu identique à l'export
 
@@ -63,10 +75,14 @@ donc exactement ce qui est exporté.
 
 - `contextIsolation`, `sandbox`, pas de `nodeIntegration` ; le renderer ne voit que `DesktopApi`.
 - CSP stricte sur la page de l'éditeur (`script-src 'self'`).
-- L'aperçu tourne dans une iframe `sandbox="allow-scripts"` chargée depuis le protocole privé
+- L'aperçu tourne dans une iframe `sandbox="allow-scripts allow-forms allow-popups"` chargée depuis le protocole privé
   `uidpreview://` servi par le process principal : les scripts « au clic » de l'utilisateur
   s'exécutent sans accès à l'application, et ne sont jamais exécutés dans le canevas.
-- Navigation et ouverture de fenêtres bloquées ; liens http(s) ouverts dans le navigateur système.
+- Navigation et ouverture de fenêtres bloquées ; liens http(s) / mailto ouverts dans le navigateur
+  système, y compris ceux cliqués dans l'aperçu (`will-frame-navigate`) ; les ancres `#id` défilent
+  dans la page.
+- Les médias importés sont lus par le process principal (taille limitée : images 15 Mo, vidéos 64 Mo)
+  et transmis en data URL ; la CSP autorise les images et vidéos `data:`, `blob:` et http(s).
 
 ## Choix techniques
 

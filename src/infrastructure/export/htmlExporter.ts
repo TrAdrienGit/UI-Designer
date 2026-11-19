@@ -5,19 +5,22 @@
  * can understand and reuse the design without opening the tool.
  */
 import type { DocumentExporter } from '../../application/ports';
+import type { Point } from '../../domain/geometry';
 import {
+  backgroundImageCss,
   BASE_CSS,
   buildHtmlIds,
   cssText,
   elementSpec,
   escapeAttr,
   escapeHtml,
+  LINKABLE_TYPES,
   ROOT_HTML_ID,
   type HtmlSpec,
 } from '../../domain/html';
 import type { UiDocument, UiElement } from '../../domain/model';
 import { getDefinition } from '../../domain/catalog';
-import { countElements } from '../../domain/tree';
+import { countElements, walk } from '../../domain/tree';
 
 export interface ExportOptions {
   /** Version written in the generator meta tag. */
@@ -33,8 +36,11 @@ export class HtmlExporter implements DocumentExporter {
     const ids = buildHtmlIds(doc.elements);
     const css: string[] = [];
     const scripts: string[] = [];
-    const markup = this.renderList(doc.elements, ids, css, scripts, 2);
+    const markup = this.renderList(doc.elements, ids, css, scripts, 2, { x: 0, y: 0 }, false);
     const background = doc.canvas.transparent ? 'transparent' : doc.canvas.background;
+    const canvasImage = backgroundImageCss(doc.canvas.backgroundImage, doc.canvas.backgroundFit)
+      .map(([k, v]) => ` ${k}: ${v};`)
+      .join('');
     const version = this.options.appVersion ?? 'dev';
 
     const lines = [
@@ -50,9 +56,10 @@ export class HtmlExporter implements DocumentExporter {
     lines.push(
       '<style>',
       '/* ---- Page ---- */',
+      'html { scroll-behavior: smooth; }',
       'html, body { margin: 0; padding: 0; }',
       `body { background: ${background}; }`,
-      `#${ROOT_HTML_ID} { width: ${doc.canvas.width}px; height: ${doc.canvas.height}px; background: ${background}; }`,
+      `#${ROOT_HTML_ID} { width: ${doc.canvas.width}px; height: ${doc.canvas.height}px; background: ${background};${canvasImage} }`,
       '/* ---- Shared component styles ---- */',
       BASE_CSS.trimEnd(),
       '/* ---- Elements (position: absolute, px relative to the parent inner box) ---- */',
@@ -77,11 +84,17 @@ export class HtmlExporter implements DocumentExporter {
     css: string[],
     scripts: string[],
     depth: number,
+    origin: Point,
+    insideFixed: boolean,
   ): string[] {
     const out: string[] = [];
     for (const el of elements) {
+      // Guide drawings only help while designing.
+      if (el.type === 'drawing' && el.props.guide) continue;
       const htmlId = ids.get(el.id)!;
-      const spec = elementSpec(el, htmlId);
+      const abs = { x: origin.x + el.x, y: origin.y + el.y };
+      const fixedRoot = el.fixed && !insideFixed;
+      const spec = elementSpec(el, htmlId, fixedRoot ? { fixedAt: abs } : {});
       css.push(`#${htmlId} { ${cssText(spec)} }`);
       if (el.props.onClick.trim()) {
         scripts.push(
@@ -95,7 +108,12 @@ export class HtmlExporter implements DocumentExporter {
       if (spec.selfClosing) {
         out.push(open);
       } else if (el.children.length > 0) {
-        out.push(open, ...this.renderList(el.children, ids, css, scripts, depth + 1), `${indent}</${spec.tag}>`);
+        const inner = { x: abs.x + el.style.borderWidth, y: abs.y + el.style.borderWidth };
+        out.push(
+          open,
+          ...this.renderList(el.children, ids, css, scripts, depth + 1, inner, insideFixed || el.fixed),
+          `${indent}</${spec.tag}>`,
+        );
       } else {
         out.push(`${open}${spec.inner}</${spec.tag}>`);
       }
@@ -104,27 +122,63 @@ export class HtmlExporter implements DocumentExporter {
   }
 
   private overview(doc: UiDocument, ids: Map<string, string>): string {
+    const { canvas } = doc;
+    const scrolls = canvas.height > canvas.viewportHeight;
+    let hasFixed = false;
+    let hasDrawing = false;
+    walk(doc.elements, (el) => {
+      hasFixed ||= el.fixed;
+      hasDrawing ||= el.type === 'drawing' && !!el.props.src;
+    });
     const lines = [
       '<!--',
       '  UI DESIGNER EXPORT',
       `  Document : ${sanitizeComment(doc.name)}`,
-      `  Canvas   : ${doc.canvas.width} x ${doc.canvas.height} px, background ${doc.canvas.transparent ? 'transparent (overlay / HUD)' : doc.canvas.background}`,
+      `  Canvas   : ${canvas.width} x ${canvas.height} px, background ${canvas.transparent ? 'transparent (overlay / HUD)' : canvas.background}` +
+        (canvas.backgroundImage ? ' + background image' : ''),
+      `  Screen   : ${canvas.width} x ${canvas.viewportHeight} px` +
+        (scrolls ? ` (the page is taller than the screen: it scrolls vertically)` : ''),
       `  Elements : ${countElements(doc)}`,
       '  Layout   : every element is position:absolute inside #' + ROOT_HTML_ID + '; left/top are px',
       '             relative to the inner box (inside the border) of the parent element.',
+    ];
+    if (hasFixed) {
+      lines.push(
+        '  Fixed    : elements flagged [fixed] use position:fixed (left/top in page px, z-index 100):',
+        '             they stay on screen while the page scrolls; their children move with them.',
+      );
+    }
+    lines.push(
       '  Styles   : one CSS rule per element, selected by id (#id), in the <style> block below.',
       '             Classes uid-<type> mark the element type; uid-* helper classes are defined once.',
+      '  Tags     : boxes use semantic tags when set (header, nav, main, section, article, aside, footer).',
+      '  Links    : "-> url" marks a link; "#id" links scroll to that element.',
       '  Hidden   : elements with the `hidden` attribute are part of the design but not displayed.',
-      '',
-      '  Element tree  (#id  type  x,y  width x height  "content")',
-    ];
+    );
+    if (hasDrawing) {
+      lines.push(
+        '  Drawings : "drawing" elements are hand-drawn PNG layers (sketches / mockups). Treat them as',
+        '             a picture of the intended design; [guide] drawings are left out of this file.',
+      );
+    }
+    lines.push('', '  Element tree  (#id  type  x,y  width x height  "content")');
     const visit = (list: readonly UiElement[], depth: number): void => {
       for (const el of list) {
         const content = describeContent(el);
-        const flags = [el.hidden ? 'hidden' : '', el.props.onClick.trim() ? 'onclick' : ''].filter(Boolean).join(',');
+        const href = LINKABLE_TYPES.has(el.type) ? el.props.href.trim() : '';
+        const flags = [
+          el.hidden ? 'hidden' : '',
+          el.fixed ? 'fixed' : '',
+          el.props.onClick.trim() ? 'onclick' : '',
+          el.type === 'drawing' && el.props.guide ? 'guide, not exported' : '',
+        ]
+          .filter(Boolean)
+          .join(',');
+        const tag = el.type === 'container' && el.props.boxTag !== 'div' ? `<${el.props.boxTag}>` : '';
         lines.push(
-          `  ${'  '.repeat(depth)}#${ids.get(el.id)}  ${el.type}  ${el.x},${el.y}  ${el.width}x${el.height}` +
+          `  ${'  '.repeat(depth)}#${ids.get(el.id)}  ${el.type}${tag ? ' ' + tag : ''}  ${el.x},${el.y}  ${el.width}x${el.height}` +
             (content ? `  ${content}` : '') +
+            (href ? `  -> ${truncate(href, 60)}${el.props.newTab ? ' (new tab)' : ''}` : '') +
             (flags ? `  [${flags}]` : ''),
         );
         visit(el.children, depth + 1);
@@ -169,6 +223,14 @@ function describeContent(el: UiElement): string {
       return `items: ${truncate(p.items.join(' | '), 60)}`;
     case 'image':
       return p.src ? (p.alt ? `alt "${truncate(p.alt)}"` : 'image') : 'image placeholder';
+    case 'video': {
+      if (!p.src) return 'video placeholder';
+      const opts = [p.autoplay && 'autoplay', p.loop && 'loop', p.muted && 'muted', p.controls && 'controls'].filter(Boolean).join(' ');
+      const source = p.src.startsWith('data:') ? 'embedded video' : `video ${truncate(p.src, 50)}`;
+      return opts ? `${source} (${opts})` : source;
+    }
+    case 'drawing':
+      return p.src ? 'hand-drawn sketch (PNG)' : 'empty drawing';
     case 'progress':
     case 'slider':
       return `value ${p.value} in [${p.min}..${p.max}]`;

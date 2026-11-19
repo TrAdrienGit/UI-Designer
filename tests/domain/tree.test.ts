@@ -5,6 +5,8 @@ import {
   cloneElement,
   contentOrigin,
   countElements,
+  drawingAt,
+  isFixedRoot,
   createElement,
   findElement,
   hitTest,
@@ -135,5 +137,42 @@ describe('tree edits', () => {
     const e = createElement('button', { x: 1.4, y: 2.6, width: 2, height: 2 }, 'b', 'b');
     expect(e).toMatchObject({ x: 1, y: 3, width: 16, height: 12 });
     expect(e.props.text).toBe('Bouton');
+  });
+});
+
+describe('drawings and fixed elements', () => {
+  it('finds the top-most drawing under a point, ignoring boxes above it', () => {
+    const sketch = el('drawing', 'sketch', { x: 0, y: 0, width: 500, height: 500 });
+    const box = el('container', 'box', { x: 0, y: 0, width: 200, height: 200 }, [
+      el('drawing', 'inner', { x: 10, y: 10, width: 50, height: 50 }),
+    ]);
+    const doc = docWith(sketch, box);
+    expect(drawingAt(doc, { x: 100, y: 100 })?.id).toBe('sketch');
+    expect(drawingAt(doc, { x: 20, y: 20 })?.id).toBe('inner');
+    expect(drawingAt(doc, { x: 600, y: 600 })).toBeNull();
+    const locked = docWith({ ...sketch, locked: true });
+    expect(drawingAt(locked, { x: 100, y: 100 })).toBeNull();
+  });
+
+  it('knows which fixed element is positioned against the screen', () => {
+    const child = el('button', 'child', { x: 0, y: 0, width: 50, height: 20 }, [], { fixed: true });
+    const header = el('container', 'header', { x: 0, y: 0, width: 500, height: 80 }, [child], { fixed: true });
+    const loose = el('text', 'loose', { x: 0, y: 100, width: 50, height: 20 }, [], { fixed: true });
+    const doc = docWith(header, loose);
+    expect(isFixedRoot(doc, 'header')).toBe(true);
+    expect(isFixedRoot(doc, 'child')).toBe(false);
+    expect(isFixedRoot(doc, 'loose')).toBe(true);
+    expect(isFixedRoot(docWith(el('text', 'n', { x: 0, y: 0, width: 5, height: 5 })), 'n')).toBe(false);
+  });
+});
+
+describe('hit test through drawings', () => {
+  it('prefers other elements to a drawing laid over them', () => {
+    const box = el('container', 'box', { x: 0, y: 0, width: 100, height: 100 });
+    const sketch = el('drawing', 'sketch', { x: 0, y: 0, width: 500, height: 500 });
+    const doc = docWith(box, sketch);
+    expect(hitTest(doc, { x: 50, y: 50 })?.id).toBe('box');
+    expect(hitTest(doc, { x: 300, y: 300 })?.id).toBe('sketch');
+    expect(hitTest(doc, { x: 300, y: 300 }, { containersOnly: true })).toBeNull();
   });
 });

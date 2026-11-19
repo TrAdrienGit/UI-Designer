@@ -3,7 +3,8 @@
  * live DOM nodes) and the exporter (which writes a standalone file), so what the
  * user sees while designing is exactly what gets exported.
  */
-import type { ElementStyle, UiElement } from './model';
+import type { Point } from './geometry';
+import { BOX_TAGS, type BackgroundFit, type ElementStyle, type UiElement } from './model';
 
 export interface HtmlSpec {
   readonly tag: string;
@@ -31,6 +32,12 @@ export const BASE_CSS = `.uid-root { position: relative; overflow: hidden; }
 .uid-root .uid-toggle input:checked + .uid-toggle-track::after { transform: translateX(16px); }
 .uid-root .uid-progress-fill { height: 100%; border-radius: inherit; }
 .uid-root .uid-placeholder { display: flex; align-items: center; justify-content: center; border: 1px dashed #9aa5b1; color: #7b8794; font-size: 12px; }
+.uid-root a.uid-button, .uid-root a.uid-container, .uid-root a.uid-image { display: block; text-decoration: none; }
+.uid-root a.uid-container { color: inherit; }
+.uid-root a.uid-button { display: flex; }
+.uid-root .uid-link { color: inherit; }
+.uid-root .uid-media { display: block; width: 100%; height: 100%; }
+.uid-root .uid-drawing img { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
 `;
 
 export function escapeHtml(text: string): string {
@@ -41,12 +48,26 @@ export function escapeAttr(text: string): string {
   return escapeHtml(text).replace(/"/g, '&quot;');
 }
 
+/** CSS declarations of a background image (none when `image` is empty). */
+export function backgroundImageCss(image: string, fit: BackgroundFit, position = 'center'): [string, string][] {
+  if (!image.trim()) return [];
+  const url = `url("${image.trim().replace(/\\/g, '\\\\').replace(/"/g, '\\"')}")`;
+  const size = { cover: 'cover', contain: 'contain', stretch: '100% 100%', tile: 'auto', none: 'auto' }[fit] ?? 'cover';
+  return [
+    ['background-image', url],
+    ['background-size', size],
+    ['background-position', position || 'center'],
+    ['background-repeat', fit === 'tile' ? 'repeat' : 'no-repeat'],
+  ];
+}
+
 const FLEX_ALIGN = { start: 'flex-start', center: 'center', end: 'flex-end' } as const;
 const TEXT_JUSTIFY = { left: 'flex-start', center: 'center', right: 'flex-end' } as const;
 
 function visualCss(style: ElementStyle, options: { font: boolean; box: boolean }): [string, string][] {
   const css: [string, string][] = [];
   if (options.box && style.background && style.background !== 'transparent') css.push(['background', style.background]);
+  if (options.box) css.push(...backgroundImageCss(style.backgroundImage, style.backgroundFit, style.backgroundPosition));
   if (options.box && style.borderWidth > 0 && style.borderStyle !== 'none') {
     css.push(['border', `${style.borderWidth}px ${style.borderStyle} ${style.borderColor}`]);
   } else if (options.box) {
@@ -70,21 +91,45 @@ function textContent(el: UiElement): string {
   return escapeHtml(el.props.text).replace(/\n/g, '<br>');
 }
 
+export interface SpecOptions {
+  /**
+   * Canvas position of an element fixed on screen (see `isFixedRoot`): it is then
+   * rendered with `position: fixed` at these coordinates instead of absolute.
+   */
+  readonly fixedAt?: Point;
+}
+
+/** Types that can carry a link (`props.href`). */
+export const LINKABLE_TYPES: ReadonlySet<UiElement['type']> = new Set(['text', 'button', 'image', 'container']);
+
 /**
  * Builds the HTML description of one element.
  * @param htmlId the exported id attribute (a unique slug of the element name)
  */
-export function elementSpec(el: UiElement, htmlId: string): HtmlSpec {
+export function elementSpec(el: UiElement, htmlId: string, options: SpecOptions = {}): HtmlSpec {
   const s = el.style;
   const p = el.props;
+  const fixed = options.fixedAt;
   const css: [string, string][] = [
-    ['position', 'absolute'],
-    ['left', `${el.x}px`],
-    ['top', `${el.y}px`],
+    ['position', fixed ? 'fixed' : 'absolute'],
+    ['left', `${fixed ? fixed.x : el.x}px`],
+    ['top', `${fixed ? fixed.y : el.y}px`],
     ['width', `${el.width}px`],
     ['height', `${el.height}px`],
   ];
+  // Fixed elements stay above the scrolling content.
+  if (fixed) css.push(['z-index', '100']);
   const attrs: Record<string, string | true> = { id: htmlId };
+  const href = LINKABLE_TYPES.has(el.type) ? p.href.trim() : '';
+  const linkAttrs = (target: Record<string, string | true>): void => {
+    target['href'] = href;
+    if (p.newTab) {
+      target['target'] = '_blank';
+      target['rel'] = 'noopener';
+    }
+  };
+  const linkAttrText = (): string =>
+    ` href="${escapeAttr(href)}"` + (p.newTab ? ' target="_blank" rel="noopener"' : '');
   const classes = ['uid-' + el.type, ...el.cssClass.split(/\s+/).filter(Boolean)];
   if (el.hidden) attrs['hidden'] = true;
   let tag = 'div';
@@ -99,6 +144,11 @@ export function elementSpec(el: UiElement, htmlId: string): HtmlSpec {
 
   switch (el.type) {
     case 'container':
+      tag = BOX_TAGS.includes(p.boxTag) ? p.boxTag : 'div';
+      if (href) {
+        tag = 'a';
+        linkAttrs(attrs);
+      }
       css.push(...visualCss(s, { font: true, box: true }));
       break;
     case 'text':
@@ -106,11 +156,17 @@ export function elementSpec(el: UiElement, htmlId: string): HtmlSpec {
       flexText();
       css.push(...visualCss(s, { font: true, box: true }));
       css.push(['white-space', 'pre-wrap']);
-      inner = textContent(el);
+      inner = href ? `<a class="uid-link"${linkAttrText()}>${textContent(el)}</a>` : textContent(el);
       break;
     case 'button':
-      tag = 'button';
-      attrs['type'] = 'button';
+      if (href) {
+        tag = 'a';
+        linkAttrs(attrs);
+        attrs['role'] = 'button';
+      } else {
+        tag = 'button';
+        attrs['type'] = 'button';
+      }
       flexText();
       css.push(...visualCss(s, { font: true, box: true }));
       inner = textContent(el);
@@ -165,7 +221,13 @@ export function elementSpec(el: UiElement, htmlId: string): HtmlSpec {
       inner = p.items.map((item) => `<li>${escapeHtml(item)}</li>`).join('');
       break;
     case 'image':
-      if (p.src) {
+      if (p.src && href) {
+        tag = 'a';
+        linkAttrs(attrs);
+        css.push(...visualCss(s, { font: false, box: true }));
+        css.push(['overflow', 'hidden']);
+        inner = `<img class="uid-media" src="${escapeAttr(p.src)}" alt="${escapeAttr(p.alt)}" style="object-fit: ${p.fit};">`;
+      } else if (p.src) {
         tag = 'img';
         selfClosing = true;
         attrs['src'] = p.src;
@@ -179,6 +241,29 @@ export function elementSpec(el: UiElement, htmlId: string): HtmlSpec {
         css.push(...visualCss(s, { font: false, box: true }).filter(([k]) => k !== 'border'));
         inner = 'Image';
       }
+      break;
+    case 'video':
+      if (p.src) {
+        tag = 'video';
+        attrs['src'] = p.src;
+        if (p.controls) attrs['controls'] = true;
+        if (p.autoplay) attrs['autoplay'] = true;
+        if (p.loop) attrs['loop'] = true;
+        if (p.muted) attrs['muted'] = true;
+        attrs['playsinline'] = true;
+        css.push(['object-fit', p.fit]);
+        css.push(...visualCss(s, { font: false, box: true }));
+      } else {
+        classes.push('uid-placeholder');
+        attrs['role'] = 'img';
+        attrs['aria-label'] = p.alt || 'video';
+        css.push(...visualCss(s, { font: false, box: true }).filter(([k]) => k !== 'border'));
+        inner = 'Vidéo';
+      }
+      break;
+    case 'drawing':
+      css.push(...visualCss(s, { font: false, box: true }));
+      if (p.src) inner = `<img src="${escapeAttr(p.src)}" alt="${escapeAttr(p.alt || 'dessin')}">`;
       break;
     case 'progress': {
       const range = p.max - p.min || 1;

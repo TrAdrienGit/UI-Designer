@@ -38,6 +38,7 @@ export function createDesktopGateways(api: DesktopApi): HostGateways {
       saveProject: (path, content, name) => api.saveProject(path, content, name),
       exportHtml: (content, name) => api.exportHtml(content, name),
       pickImage: () => api.pickImage(),
+      pickVideo: () => api.pickVideo(),
     },
     dialogs: {
       confirmUnsaved: (name) => api.confirmUnsaved(name),
@@ -50,6 +51,15 @@ export function createDesktopGateways(api: DesktopApi): HostGateways {
       },
     },
   };
+}
+
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
 }
 
 /** Plain-browser implementation (development only): downloads instead of native dialogs. */
@@ -92,13 +102,11 @@ export function createBrowserGateways(): HostGateways {
       },
       async pickImage() {
         const file = await pickFile('image/*');
-        if (!file) return null;
-        return new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result));
-          reader.onerror = () => reject(reader.error);
-          reader.readAsDataURL(file);
-        });
+        return file ? readAsDataUrl(file) : null;
+      },
+      async pickVideo() {
+        const file = await pickFile('video/*');
+        return file ? readAsDataUrl(file) : null;
       },
     },
     dialogs: {

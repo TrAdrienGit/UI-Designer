@@ -23,6 +23,7 @@ export function createElement(type: ElementType, rect: Rect, id: string, name: s
     height: Math.max(def.minHeight, Math.round(rect.height)),
     hidden: false,
     locked: false,
+    fixed: false,
     cssClass: '',
     style: defaultStyleFor(type),
     props: defaultPropsFor(type),
@@ -169,12 +170,21 @@ export interface HitTestOptions {
   exclude?: ReadonlySet<string>;
 }
 
-/** Deepest, top-most visible element under a canvas point; null when only the canvas is hit. */
+/**
+ * Deepest, top-most visible element under a canvas point; null when only the canvas is hit.
+ * Drawing layers are transparent sheets laid over the page: they are only hit where
+ * no other element is under the point (so boxes stay clickable through a sketch).
+ */
 export function hitTest(doc: UiDocument, point: Point, options: HitTestOptions = {}): UiElement | null {
+  return hitTestPass(doc, point, options, false) ?? (options.containersOnly ? null : hitTestPass(doc, point, options, true));
+}
+
+function hitTestPass(doc: UiDocument, point: Point, options: HitTestOptions, drawings: boolean): UiElement | null {
   const visit = (elements: readonly UiElement[], origin: Point): UiElement | null => {
     for (let i = elements.length - 1; i >= 0; i--) {
       const el = elements[i]!;
       if (el.hidden || options.exclude?.has(el.id)) continue;
+      if (el.type === 'drawing' && !drawings) continue;
       const rect = { x: origin.x + el.x, y: origin.y + el.y, width: el.width, height: el.height };
       if (!containsPoint(rect, point)) continue;
       const inner = { x: rect.x + el.style.borderWidth, y: rect.y + el.style.borderWidth };
@@ -185,6 +195,32 @@ export function hitTest(doc: UiDocument, point: Point, options: HitTestOptions =
     return null;
   };
   return visit(doc.elements, { x: 0, y: 0 });
+}
+
+/**
+ * Top-most visible, unlocked drawing whose rect contains the point (boxes drawn
+ * above it are ignored, so a sketch under the layout stays paintable).
+ */
+export function drawingAt(doc: UiDocument, point: Point): UiElement | null {
+  const visit = (elements: readonly UiElement[], origin: Point): UiElement | null => {
+    for (let i = elements.length - 1; i >= 0; i--) {
+      const el = elements[i]!;
+      if (el.hidden) continue;
+      const rect = { x: origin.x + el.x, y: origin.y + el.y, width: el.width, height: el.height };
+      const deeper = visit(el.children, { x: rect.x + el.style.borderWidth, y: rect.y + el.style.borderWidth });
+      if (deeper) return deeper;
+      if (el.type === 'drawing' && !el.locked && containsPoint(rect, point)) return el;
+    }
+    return null;
+  };
+  return visit(doc.elements, { x: 0, y: 0 });
+}
+
+/** True when the element is fixed on screen and no ancestor is (it is then positioned against the viewport). */
+export function isFixedRoot(doc: UiDocument, id: string): boolean {
+  const el = findElement(doc, id);
+  if (!el?.fixed) return false;
+  return !(ancestorsOf(doc, id) ?? []).some((a) => a.fixed);
 }
 
 /**

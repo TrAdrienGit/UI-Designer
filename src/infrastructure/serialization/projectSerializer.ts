@@ -6,8 +6,11 @@
 import type { DocumentSerializer } from '../../application/ports';
 import { defaultPropsFor, defaultStyleFor, isElementType } from '../../domain/catalog';
 import {
+  BACKGROUND_FITS,
+  BOX_TAGS,
   createEmptyDocument,
   DOCUMENT_FORMAT_VERSION,
+  type CanvasSettings,
   type ElementProps,
   type ElementStyle,
   type UiDocument,
@@ -56,6 +59,11 @@ function mergeTyped<T extends object>(defaults: T, raw: unknown): T {
   return out as T;
 }
 
+/** Keeps `value` only when it is one of the allowed values. */
+function oneOf<T extends string>(value: T, allowed: readonly T[], fallback: T): T {
+  return allowed.includes(value) ? value : fallback;
+}
+
 export class JsonProjectSerializer implements DocumentSerializer {
   serialize(doc: UiDocument): string {
     return JSON.stringify({ format: PROJECT_FORMAT, ...doc, version: DOCUMENT_FORMAT_VERSION }, null, 2) + '\n';
@@ -79,10 +87,17 @@ export class JsonProjectSerializer implements DocumentSerializer {
     }
     const base = createEmptyDocument();
     const ids = new Set<string>();
+    const canvasRaw = mergeTyped(base.canvas, raw['canvas']);
+    const canvas: CanvasSettings = {
+      ...canvasRaw,
+      // Format 1 had no screen height: the page was exactly one screen.
+      viewportHeight: version < 2 ? canvasRaw.height : Math.max(16, canvasRaw.viewportHeight),
+      backgroundFit: oneOf(canvasRaw.backgroundFit, BACKGROUND_FITS, 'cover'),
+    };
     return {
       version: DOCUMENT_FORMAT_VERSION,
       name: str(raw['name'], base.name),
-      canvas: mergeTyped(base.canvas, raw['canvas']),
+      canvas,
       grid: mergeTyped(base.grid, raw['grid']),
       elements: this.parseElements(raw['elements'], ids),
     };
@@ -97,8 +112,10 @@ export class JsonProjectSerializer implements DocumentSerializer {
       let id = str(item['id'], '');
       if (!id || ids.has(id)) id = randomId();
       ids.add(id);
-      const style: ElementStyle = mergeTyped(defaultStyleFor(type), item['style']);
-      const props: ElementProps = mergeTyped(defaultPropsFor(type), item['props']);
+      const styleRaw: ElementStyle = mergeTyped(defaultStyleFor(type), item['style']);
+      const style: ElementStyle = { ...styleRaw, backgroundFit: oneOf(styleRaw.backgroundFit, BACKGROUND_FITS, 'cover') };
+      const propsRaw: ElementProps = mergeTyped(defaultPropsFor(type), item['props']);
+      const props: ElementProps = { ...propsRaw, boxTag: oneOf(propsRaw.boxTag, BOX_TAGS, 'div') };
       out.push({
         id,
         type,
@@ -109,6 +126,7 @@ export class JsonProjectSerializer implements DocumentSerializer {
         height: Math.max(1, num(item['height'], 100)),
         hidden: bool(item['hidden'], false),
         locked: bool(item['locked'], false),
+        fixed: bool(item['fixed'], false),
         cssClass: str(item['cssClass'], ''),
         style,
         props,

@@ -5,19 +5,22 @@
  */
 import type { EditorStore } from '../../application/editorStore';
 import { dropInto, moveElements, movableIds, resizeElement, type ResizeHandle } from '../../application/transform';
-import { getDefinition } from '../../domain/catalog';
+import { getBoxPreset, getDefinition, isElementType } from '../../domain/catalog';
 import { containsRect, rectFromPoints, snap, type Point, type Rect } from '../../domain/geometry';
-import { absoluteRect, findElement, hitTest, parentIdOf, walk } from '../../domain/tree';
+import { absoluteRect, contentOrigin, findElement, hitTest, parentIdOf, walk } from '../../domain/tree';
 import type { Logger } from '../../application/ports';
-import { isElementTool } from '../tools';
-import type { CanvasView } from './canvasView';
+import type { PaintController } from '../paint/paintController';
+import { isElementTool, isPaintTool } from '../tools';
+import type { CanvasView, PageHandle } from './canvasView';
 
 type Gesture =
   | { kind: 'draw'; start: Point; current: Point }
   | { kind: 'move'; start: Point; ids: string[]; started: boolean; clickId: string }
   | { kind: 'resize'; id: string; handle: ResizeHandle; start: Point }
   | { kind: 'marquee'; start: Point; current: Point; additive: boolean; base: readonly string[] }
-  | { kind: 'pan'; startX: number; startY: number; scrollLeft: number; scrollTop: number };
+  | { kind: 'pan'; startX: number; startY: number; scrollLeft: number; scrollTop: number }
+  | { kind: 'page'; handle: PageHandle; start: Point }
+  | { kind: 'paint' };
 
 /** Pointer travel (screen px) under which a press counts as a click. */
 const CLICK_TOLERANCE = 4;
@@ -40,6 +43,7 @@ export class CanvasInteraction {
     private readonly store: EditorStore,
     private readonly callbacks: CanvasInteractionCallbacks,
     private readonly log: Logger,
+    private readonly paint: PaintController,
   ) {
     const vp = view.viewport;
     vp.addEventListener('pointerdown', (e) => this.onPointerDown(e));
@@ -57,6 +61,8 @@ export class CanvasInteraction {
     vp.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
     vp.addEventListener('contextmenu', (e) => {
       e.preventDefault();
+      // Right button paints with the secondary color.
+      if (isPaintTool(this.store.getState().tool)) return;
       const p = this.view.toCanvasPoint(e.clientX, e.clientY);
       const hit = hitTest(this.store.document, p);
       if (hit && !this.store.getState().selection.includes(hit.id)) this.store.select([hit.id]);
@@ -99,7 +105,22 @@ export class CanvasInteraction {
       this.startPan(e);
       return;
     }
+    if (isPaintTool(state.tool) && (e.button === 0 || e.button === 2)) {
+      if (this.paint.begin(state.tool, p, e.button === 2)) {
+        this.gesture = { kind: 'paint' };
+        this.capture(e);
+      }
+      return;
+    }
     if (e.button !== 0) return;
+
+    const pageHandle = (e.target as HTMLElement).dataset?.['pageHandle'] as PageHandle | undefined;
+    if (pageHandle && state.tool === 'pointer') {
+      this.store.beginGesture();
+      this.gesture = { kind: 'page', handle: pageHandle, start: p };
+      this.capture(e);
+      return;
+    }
 
     if (state.tool === 'zoom') {
       const before = p;
@@ -206,6 +227,25 @@ export class CanvasInteraction {
         this.view.renderOverlay();
         break;
       }
+      case 'paint':
+        this.paint.move(p, e.shiftKey);
+        break;
+      case 'page': {
+        const grid = this.grid;
+        const fit = (v: number): number => Math.max(16, grid > 1 ? snap(v, grid) : Math.round(v));
+        const dx = p.x - g.start.x;
+        const dy = p.y - g.start.y;
+        const handle = g.handle;
+        this.store.updateGesture((base) => ({
+          ...base,
+          canvas: {
+            ...base.canvas,
+            width: handle === 's' ? base.canvas.width : fit(base.canvas.width + dx),
+            height: handle === 'e' ? base.canvas.height : fit(base.canvas.height + dy),
+          },
+        }));
+        break;
+      }
       case 'resize': {
         const delta = { x: p.x - g.start.x, y: p.y - g.start.y };
         const grid = this.grid;
@@ -255,6 +295,12 @@ export class CanvasInteraction {
       case 'resize':
         this.store.endGesture('Redimensionner');
         break;
+      case 'page':
+        this.store.endGesture('Redimensionner la page');
+        break;
+      case 'paint':
+        this.paint.end();
+        break;
       case 'marquee':
         break;
     }
@@ -267,18 +313,43 @@ export class CanvasInteraction {
   private finishDraw(start: Point, current: Point, e: PointerEvent): void {
     const state = this.store.getState();
     if (!isElementTool(state.tool)) return;
-    const type = state.tool;
+    const tool = state.tool;
+    const preset = getBoxPreset(tool);
+    const type = preset ? 'container' : isElementType(tool) ? tool : null;
+    if (!type) return;
     const def = getDefinition(type);
     const z = state.zoom;
-    let rect: Rect = rectFromPoints(start, current);
-    if (rect.width * z < CLICK_TOLERANCE && rect.height * z < CLICK_TOLERANCE) {
+    const click = rectFromPoints(start, current);
+    const isClick = click.width * z < CLICK_TOLERANCE && click.height * z < CLICK_TOLERANCE;
+    let rect: Rect;
+    let parentId: string | null | undefined;
+    let grid = this.grid;
+    if (preset && isClick) {
+      // Page regions span the full width of the page (or of the box clicked in).
+      const doc = this.store.document;
+      const parent = hitTest(doc, start, { containersOnly: true });
+      parentId = parent?.id ?? null;
+      const origin = contentOrigin(doc, parentId);
+      const innerW = parent ? parent.width - parent.style.borderWidth * 2 : doc.canvas.width;
+      const innerH = parent ? parent.height - parent.style.borderWidth * 2 : doc.canvas.height;
+      const height = Math.min(preset.defaultHeight, innerH);
+      const y = preset.placement === 'top' ? origin.y : preset.placement === 'bottom' ? origin.y + innerH - height : start.y;
+      rect = { x: origin.x, y, width: innerW, height };
+      grid = 0;
+    } else if (isClick) {
       // Simple click: default size, top-left corner at the click.
       rect = { x: start.x, y: start.y, width: def.defaultWidth, height: def.defaultHeight };
     } else {
-      rect = { ...rect, width: Math.max(rect.width, def.minWidth), height: Math.max(rect.height, def.minHeight) };
+      rect = { ...click, width: Math.max(click.width, def.minWidth), height: Math.max(click.height, def.minHeight) };
     }
-    const id = this.store.addElement(type, rect, undefined, this.grid);
-    this.log.info(`Element created: ${type}`, { id, rect });
+    const id = this.store.addElement(
+      type,
+      rect,
+      parentId,
+      grid,
+      preset ? { namePrefix: preset.namePrefix, style: preset.style, props: { boxTag: preset.tag } } : {},
+    );
+    this.log.info(`Element created: ${preset ? preset.id : type}`, { id, rect });
     // Ctrl keeps the tool active to draw several elements in a row.
     if (!e.ctrlKey) this.store.setTool('pointer');
   }
@@ -296,7 +367,8 @@ export class CanvasInteraction {
     const g = this.gesture;
     if (!g) return false;
     this.release();
-    if (g.kind === 'move' || g.kind === 'resize') this.store.cancelGesture();
+    if (g.kind === 'move' || g.kind === 'resize' || g.kind === 'page') this.store.cancelGesture();
+    if (g.kind === 'paint') this.paint.cancel();
     if (g.kind === 'pan') this.view.viewport.classList.remove('panning');
     this.view.overlayState.dropTargetId = null;
     this.view.overlayState.marquee = null;

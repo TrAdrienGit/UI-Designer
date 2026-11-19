@@ -6,15 +6,19 @@
 import type { EditorState } from '../../application/editorStore';
 import type { ResizeHandle } from '../../application/transform';
 import type { Point, Rect } from '../../domain/geometry';
-import { cssText, elementSpec } from '../../domain/html';
+import { backgroundImageCss, cssText, elementSpec, LINKABLE_TYPES } from '../../domain/html';
 import type { UiElement } from '../../domain/model';
-import { absoluteRect, findElement } from '../../domain/tree';
+import { absoluteRect, findElement, walk } from '../../domain/tree';
 import { h } from '../dom';
+import { icon } from '../icons';
 
 /** Free space around the canvas inside the scroll area (screen px). */
 export const CANVAS_MARGIN = 400;
 
 const HANDLES: readonly ResizeHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+
+/** Handles that resize the page itself (bottom edge, right edge, corner). */
+export type PageHandle = 's' | 'e' | 'se';
 
 export interface OverlayState {
   hoverId: string | null;
@@ -37,6 +41,8 @@ export class CanvasView {
   private readonly gridEl: HTMLElement;
   private readonly overlay: HTMLElement;
   private cache = new Map<string, CachedNode>();
+  /** Fixed state of each cached node (a node is rebuilt when it changes). */
+  private fixedState = new Map<string, boolean>();
   private state: EditorState | null = null;
   readonly overlayState: OverlayState = { hoverId: null, dropTargetId: null, marquee: null, drawRect: null };
 
@@ -70,6 +76,10 @@ export class CanvasView {
       transform: `scale(${z})`,
       background: canvas.transparent ? '' : canvas.background,
     });
+    const bg = backgroundImageCss(canvas.backgroundImage, canvas.backgroundFit);
+    for (const prop of ['background-image', 'background-size', 'background-position', 'background-repeat']) {
+      this.canvasEl.style.setProperty(prop, bg.find(([k]) => k === prop)?.[1] ?? '');
+    }
     this.canvasEl.classList.toggle('transparent', canvas.transparent);
 
     const step = grid.size * z;
@@ -88,36 +98,87 @@ export class CanvasView {
 
   private renderElements(state: EditorState): void {
     const next = new Map<string, CachedNode>();
-    const build = (el: UiElement): HTMLElement => {
+    const nextFixed = new Map<string, boolean>();
+    // Fixed elements render with position: fixed at their page coordinates; inside the
+    // scaled canvas (a CSS transform) that behaves like absolute positioning on the page.
+    const build = (el: UiElement, origin: Point, insideFixed: boolean): HTMLElement => {
+      const fixedRoot = el.fixed && !insideFixed;
       const cached = this.cache.get(el.id);
-      if (cached && cached.el === el) {
+      if (cached && cached.el === el && this.fixedState.get(el.id) === fixedRoot && !fixedRoot) {
         // Unchanged subtree: reuse the nodes (and register the whole subtree as alive).
         const keep = (e: UiElement): void => {
           const c = this.cache.get(e.id);
           if (c) next.set(e.id, c);
+          nextFixed.set(e.id, this.fixedState.get(e.id) ?? false);
           e.children.forEach(keep);
         };
         keep(el);
         return cached.node;
       }
-      const spec = elementSpec(el, '');
+      const abs = { x: origin.x + el.x, y: origin.y + el.y };
+      const spec = elementSpec(el, '', fixedRoot ? { fixedAt: abs } : {});
       const node = document.createElement(spec.tag);
       for (const [key, value] of Object.entries(spec.attrs)) {
-        if (key === 'id') continue; // element ids must not clash with the editor's own DOM
+        if (key === 'id' || key === 'autoplay') continue; // no id clash with the editor's DOM, no playback while designing
         node.setAttribute(key, value === true ? '' : value);
       }
       node.style.cssText = cssText(spec);
       node.dataset['uid'] = el.id;
       if (!spec.selfClosing) {
-        if (el.children.length > 0) node.append(...el.children.map(build));
+        const inner = { x: abs.x + el.style.borderWidth, y: abs.y + el.style.borderWidth };
+        if (el.children.length > 0) node.append(...el.children.map((c) => build(c, inner, insideFixed || el.fixed)));
         else node.innerHTML = spec.inner;
       }
       next.set(el.id, { el, node });
+      nextFixed.set(el.id, fixedRoot);
       return node;
     };
-    const nodes = state.document.elements.map(build);
+    const nodes = state.document.elements.map((el) => build(el, { x: 0, y: 0 }, false));
     this.canvasEl.replaceChildren(...nodes);
     this.cache = next;
+    this.fixedState = nextFixed;
+  }
+
+  /** Live DOM node of an element on the design surface. */
+  nodeOf(id: string): HTMLElement | undefined {
+    return this.cache.get(id)?.node;
+  }
+
+  /**
+   * Shows a paint surface over `rect` (canvas coordinates). When `replaces` is
+   * given the surface takes that node's place in the stacking order.
+   */
+  showPaintSurface(surface: HTMLCanvasElement, rect: Rect, replaces: HTMLElement | null): void {
+    surface.className = 'paint-surface';
+    if (replaces && replaces.parentElement) {
+      // Same place in the stacking order and same positioning as the drawing node;
+      // the size is the stroke rect (larger than the node when the page sketch grows).
+      const st = replaces.style;
+      Object.assign(surface.style, {
+        position: st.position || 'absolute',
+        left: st.left,
+        top: st.top,
+        width: `${rect.width}px`,
+        height: `${rect.height}px`,
+        zIndex: st.zIndex,
+      });
+      replaces.after(surface);
+      replaces.style.visibility = 'hidden';
+    } else {
+      Object.assign(surface.style, {
+        position: 'absolute',
+        left: `${rect.x}px`,
+        top: `${rect.y}px`,
+        width: `${rect.width}px`,
+        height: `${rect.height}px`,
+      });
+      this.canvasEl.prepend(surface);
+    }
+  }
+
+  hidePaintSurface(surface: HTMLCanvasElement, restore: HTMLElement | null): void {
+    surface.remove();
+    if (restore) restore.style.visibility = '';
   }
 
   /** Redraws selection boxes, handles and rubber bands. Cheap: call on every pointer move. */
@@ -133,6 +194,46 @@ export class CanvasView {
         style: `left:${r.x}px;top:${r.y}px;width:${r.width}px;height:${r.height}px`,
       });
     };
+
+    const { canvas } = doc;
+    // Fold line: bottom of the first screen when the page is taller than the screen.
+    if (canvas.viewportHeight < canvas.height) {
+      const z = state.zoom;
+      for (let n = 1; n * canvas.viewportHeight < canvas.height; n++) {
+        const y = CANVAS_MARGIN + n * canvas.viewportHeight * z;
+        parts.push(
+          h(
+            'div',
+            { class: n === 1 ? 'ov-fold' : 'ov-fold secondary', style: `left:${CANVAS_MARGIN}px;top:${y}px;width:${canvas.width * z}px` },
+            h('span', {}, n === 1 ? `Bas de l’écran (${canvas.viewportHeight} px) — la suite défile` : `Écran ${n + 1}`),
+          ),
+        );
+      }
+    }
+    // Badges: fixed elements (pin) and links.
+    walk(doc.elements, (el) => {
+      if (el.hidden) return;
+      const isLink = LINKABLE_TYPES.has(el.type) && el.props.href.trim() !== '';
+      if (!el.fixed && !isLink) return;
+      const r = absoluteRect(doc, el.id);
+      if (!r) return;
+      const o = this.toOverlay(r);
+      const badges = h('div', { class: 'ov-badges', style: `left:${o.x + o.width}px;top:${o.y}px` });
+      if (el.fixed) badges.append(h('span', { class: 'ov-badge fixed', title: 'Fixe à l’écran', html: icon('pin', 11) }));
+      if (isLink) badges.append(h('span', { class: 'ov-badge link', title: el.props.href, html: icon('link', 11) }));
+      parts.push(badges);
+    });
+    // Page resize handles.
+    if (state.tool === 'pointer') {
+      const pr = this.toOverlay({ x: 0, y: 0, width: canvas.width, height: canvas.height });
+      const handle = (kind: PageHandle, left: number, top: number, title: string): HTMLElement =>
+        h('div', { class: `ov-page-handle p-${kind}`, 'data-page-handle': kind, title, style: `left:${left}px;top:${top}px` });
+      parts.push(
+        handle('s', pr.x + pr.width / 2, pr.y + pr.height, 'Glisser pour allonger la page'),
+        handle('e', pr.x + pr.width, pr.y + pr.height / 2, 'Glisser pour élargir la page'),
+        handle('se', pr.x + pr.width, pr.y + pr.height, 'Glisser pour redimensionner la page'),
+      );
+    }
 
     const { hoverId, dropTargetId, marquee, drawRect } = this.overlayState;
     if (hoverId && !state.selection.includes(hoverId)) {

@@ -22,6 +22,7 @@ function setup(choice: 'save' | 'discard' | 'cancel' = 'discard') {
       return suggested;
     }),
     pickImage: vi.fn(async () => null),
+    pickVideo: vi.fn(async () => null),
   };
   const dialogs: DialogGateway = {
     confirmUnsaved: vi.fn(async () => choice),

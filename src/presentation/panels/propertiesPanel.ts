@@ -5,11 +5,13 @@
 import type { EditorState, EditorStore } from '../../application/editorStore';
 import type { FileGateway, Logger } from '../../application/ports';
 import { getDefinition } from '../../domain/catalog';
-import type { ElementProps, ElementStyle, UiElement } from '../../domain/model';
+import { buildHtmlIds, LINKABLE_TYPES } from '../../domain/html';
+import type { BackgroundFit, BoxTag, ElementProps, ElementStyle, UiElement } from '../../domain/model';
 import { contentOrigin, findElement, parentIdOf } from '../../domain/tree';
 import { h } from '../dom';
 import { icon } from '../icons';
 import { CANVAS_PRESETS, FONT_SUGGESTIONS } from '../presets';
+import { toast } from '../widgets';
 import {
   buttonRow,
   checkField,
@@ -78,7 +80,7 @@ export class PropertiesPanel {
     presetSelect.addEventListener('change', () => {
       const preset = CANVAS_PRESETS[Number(presetSelect.value)];
       if (preset) {
-        s.updateCanvas({ width: preset.width, height: preset.height, transparent: preset.transparent ?? false });
+        s.updateCanvas({ width: preset.width, height: preset.height, viewportHeight: preset.height, transparent: preset.transparent ?? false });
         this.log.info('Canvas preset applied', { preset: preset.label });
       }
       presetSelect.value = '';
@@ -90,11 +92,38 @@ export class PropertiesPanel {
         row('Nom', this.add(textField(() => doc().name, (v) => s.renameDocument(v)))),
       ),
       section(
-        'Canevas',
+        'Page',
         row('Format', presetSelect),
         row('Largeur', this.add(numberField(() => doc().canvas.width, (v) => s.updateCanvas({ width: v }), { min: 16, max: 10000, suffix: 'px' }))),
-        row('Hauteur', this.add(numberField(() => doc().canvas.height, (v) => s.updateCanvas({ height: v }), { min: 16, max: 10000, suffix: 'px' }))),
+        row('Hauteur', this.add(numberField(() => doc().canvas.height, (v) => s.updateCanvas({ height: v }), { min: 16, max: 50000, suffix: 'px' }))),
+        row('Écran', this.add(numberField(() => doc().canvas.viewportHeight, (v) => s.updateCanvas({ viewportHeight: v }), { min: 16, max: 10000, suffix: 'px' }))),
+        buttonRow(
+          h('button', {
+            class: 'btn',
+            type: 'button',
+            title: 'Allonge la page de la hauteur d’un écran',
+            onclick: () => s.updateCanvas({ height: doc().canvas.height + doc().canvas.viewportHeight }),
+          }, '+ 1 écran'),
+          h('button', {
+            class: 'btn',
+            type: 'button',
+            title: 'Ramène la page à la hauteur de l’écran',
+            onclick: () => s.updateCanvas({ height: doc().canvas.viewportHeight }),
+          }, '1 seul écran'),
+        ),
+        h(
+          'div',
+          { class: 'panel-hint' },
+          'Hauteur = toute la page ; Écran = partie visible. Une page plus haute que l’écran défile dans l’Aperçu. ',
+          'Vous pouvez aussi tirer la poignée sous la page.',
+        ),
         row('Fond', this.add(colorField(() => doc().canvas.background, (v) => s.updateCanvas({ background: v })))),
+        ...this.backgroundImageRows(
+          () => doc().canvas.backgroundImage,
+          (v) => s.updateCanvas({ backgroundImage: v }),
+          () => doc().canvas.backgroundFit,
+          (v) => s.updateCanvas({ backgroundFit: v }),
+        ),
         row('', this.add(checkField('Fond transparent (HUD / overlay)', () => doc().canvas.transparent, (v) => s.updateCanvas({ transparent: v })))),
       ),
       section(
@@ -133,6 +162,7 @@ export class PropertiesPanel {
         row('Classes CSS', this.add(textField(() => cur().cssClass, (v) => s.updateElement(id, { cssClass: v }), { mono: true, placeholder: 'classe-a classe-b' }))),
         row('', this.add(checkField('Masqué', () => cur().hidden, (v) => s.updateElement(id, { hidden: v })))),
         row('', this.add(checkField('Verrouillé', () => cur().locked, (v) => s.updateElement(id, { locked: v })))),
+        row('', this.add(checkField('Fixe à l’écran (ne défile pas)', () => cur().fixed, (v) => s.updateElement(id, { fixed: v })))),
       ),
       section(
         'Position et taille',
@@ -149,7 +179,9 @@ export class PropertiesPanel {
     ];
     const contentSection = this.buildContent(el.type, id, cur);
     if (contentSection) sections.push(contentSection);
-    sections.push(...this.buildStyleSections([id], () => cur().style, el.type !== 'image' && el.type !== 'divider' && el.type !== 'progress' && el.type !== 'slider'));
+    if (LINKABLE_TYPES.has(el.type)) sections.push(this.buildLink(id, cur));
+    const noText = ['image', 'video', 'drawing', 'divider', 'progress', 'slider'];
+    sections.push(...this.buildStyleSections([id], () => cur().style, !noText.includes(el.type)));
     sections.push(
       section(
         'Interaction',
@@ -210,6 +242,30 @@ export class PropertiesPanel {
     ];
 
     switch (type) {
+      case 'container':
+        return section(
+          'Contenu',
+          row(
+            'Balise',
+            this.add(
+              selectField<BoxTag>(
+                [
+                  ['div', 'Boîte simple (div)'],
+                  ['header', 'En-tête (header)'],
+                  ['nav', 'Navigation (nav)'],
+                  ['main', 'Contenu principal (main)'],
+                  ['section', 'Section'],
+                  ['article', 'Article'],
+                  ['aside', 'Encadré (aside)'],
+                  ['footer', 'Pied de page (footer)'],
+                ],
+                p('boxTag'),
+                setP('boxTag'),
+              ),
+            ),
+          ),
+          h('div', { class: 'panel-hint' }, 'La balise donne le rôle de la boîte dans la page (utile pour le référencement et les IA).'),
+        );
       case 'text':
         return section(
           'Contenu',
@@ -276,19 +332,12 @@ export class PropertiesPanel {
       case 'list':
         return section('Contenu', items('Éléments (1/ligne)'), row('', this.add(checkField('Liste numérotée', p('ordered'), setP('ordered')))));
       case 'image': {
-        const pick = h('button', { class: 'btn', type: 'button' }, 'Choisir une image…');
-        pick.addEventListener('click', async () => {
-          try {
-            const src = await this.files.pickImage();
-            if (src) s.updateProps([id], { src });
-          } catch (err) {
-            this.log.error('Image import failed', err);
-          }
-        });
+        const pick = this.mediaButton('Choisir une image…', 'image', (src) => s.updateProps([id], { src }));
         const remove = h('button', { class: 'btn', type: 'button', onclick: () => s.updateProps([id], { src: '' }) }, 'Retirer');
         return section(
           'Contenu',
           buttonRow(pick, remove),
+          this.sourceRow(() => cur().props.src, (v) => s.updateProps([id], { src: v })),
           row('Texte alt.', this.add(textField(p('alt'), setP('alt')))),
           row(
             'Ajustement',
@@ -305,15 +354,187 @@ export class PropertiesPanel {
               ),
             ),
           ),
-          h('div', { class: 'panel-hint' }, 'L’image est intégrée au fichier (data URL) : l’export reste un fichier unique.'),
+          h('div', { class: 'panel-hint' }, 'Importée, l’image est intégrée au fichier (data URL) : l’export reste un fichier unique. Une URL reste externe.'),
         );
       }
+      case 'video':
+        return section(
+          'Contenu',
+          buttonRow(
+            this.mediaButton('Importer une vidéo…', 'video', (src) => s.updateProps([id], { src })),
+            h('button', { class: 'btn', type: 'button', onclick: () => s.updateProps([id], { src: '' }) }, 'Retirer'),
+          ),
+          this.sourceRow(() => cur().props.src, (v) => s.updateProps([id], { src: v })),
+          row('', this.add(checkField('Contrôles (lecture, volume…)', p('controls'), setP('controls')))),
+          row('', this.add(checkField('Lecture automatique', p('autoplay'), setP('autoplay')))),
+          row('', this.add(checkField('En boucle', p('loop'), setP('loop')))),
+          row('', this.add(checkField('Muet', p('muted'), setP('muted')))),
+          row(
+            'Ajustement',
+            this.add(
+              selectField(
+                [
+                  ['contain', 'Contenir'],
+                  ['cover', 'Couvrir'],
+                  ['fill', 'Étirer'],
+                ] as const,
+                p('fit'),
+                setP('fit'),
+              ),
+            ),
+          ),
+          h(
+            'div',
+            { class: 'panel-hint' },
+            'Importée, la vidéo est intégrée au fichier (64 Mo max., le fichier exporté grossit d’autant) ; ',
+            'sinon indiquez une URL. Les navigateurs ne lancent la lecture automatique que si la vidéo est muette. ',
+            'Elle ne joue pas dans la vue Conception : voir l’Aperçu.',
+          ),
+        );
+      case 'drawing':
+        return section(
+          'Dessin',
+          row('', this.add(checkField('Guide seulement (non exporté)', p('guide'), setP('guide')))),
+          buttonRow(
+            this.mediaButton('Importer une image…', 'image', (src) => s.updateProps([id], { src })),
+            h('button', { class: 'btn', type: 'button', onclick: () => s.updateProps([id], { src: '' }) }, 'Effacer'),
+          ),
+          h(
+            'div',
+            { class: 'panel-hint' },
+            'Peignez dans ce calque avec le crayon, le pinceau, la gomme, le pot ou les formes (groupe Dessin de la boîte à outils). ',
+            'Un calque « guide » sert de modèle à décalquer : il reste visible ici mais n’est pas exporté. ',
+            'Importer une image (capture, croquis scanné) la place dans le calque pour la retoucher ou la décalquer.',
+          ),
+        );
       case 'progress':
       case 'slider':
         return section('Contenu', ...range(), accent());
       default:
         return null;
     }
+  }
+
+  // ------------------------------------------------------------------ links & media helpers
+
+  private buildLink(id: string, cur: () => UiElement): HTMLElement {
+    const s = this.store;
+    const anchors = [...buildHtmlIds(s.document.elements).values()].map((v) => `#${v}`);
+    return section(
+      'Lien',
+      row(
+        'Adresse',
+        this.add(
+          textField(() => cur().props.href, (v) => s.updateProps([id], { href: v }), {
+            mono: true,
+            placeholder: 'https://… ou #id',
+            list: anchors,
+          }),
+        ),
+      ),
+      row('', this.add(checkField('Ouvrir dans un nouvel onglet', () => cur().props.newTab, (v) => s.updateProps([id], { newTab: v })))),
+      h(
+        'div',
+        { class: 'panel-hint' },
+        'Exemples : https://exemple.fr, page.html, #section-1 (fait défiler jusqu’à cet élément), mailto:moi@exemple.fr. ',
+        'Testable dans l’Aperçu : les liens web s’ouvrent dans le navigateur.',
+      ),
+    );
+  }
+
+  /** Button that imports an image / video file and hands its data URL to `apply`. */
+  private mediaButton(label: string, kind: 'image' | 'video', apply: (src: string) => void): HTMLElement {
+    const btn = h('button', { class: 'btn', type: 'button' }, label);
+    btn.addEventListener('click', async () => {
+      try {
+        const src = kind === 'image' ? await this.files.pickImage() : await this.files.pickVideo();
+        if (src) apply(src);
+      } catch (err) {
+        this.log.error(`${kind} import failed`, err);
+        toast(`Import impossible : ${cleanError(err)}`);
+      }
+    });
+    return btn;
+  }
+
+  /** URL of a media (empty when the file is embedded) + size of the embedded data. */
+  private sourceRow(get: () => string, set: (v: string) => void): HTMLElement {
+    const field = this.add(
+      textField(() => (get().startsWith('data:') ? '' : get()), (v) => set(v.trim()), { mono: true, placeholder: 'URL (https://…, video.mp4…)' }),
+    );
+    const status = h('div', { class: 'panel-hint media-status' });
+    this.add({
+      element: status,
+      refresh() {
+        const src = get();
+        status.textContent = src.startsWith('data:') ? `Fichier intégré (${formatBytes(dataUrlBytes(src))})` : src ? 'Fichier externe (URL)' : 'Aucun fichier';
+      },
+    });
+    return h('div', {}, row('URL', field), status);
+  }
+
+  private backgroundImageRows(
+    getImage: () => string,
+    setImage: (v: string) => void,
+    getFit: () => BackgroundFit,
+    setFit: (v: BackgroundFit) => void,
+    getPosition?: () => string,
+    setPosition?: (v: string) => void,
+  ): HTMLElement[] {
+    const remove = h('button', { class: 'btn', type: 'button', onclick: () => setImage('') }, 'Retirer');
+    const status = h('span', { class: 'muted' });
+    this.add({
+      element: status,
+      refresh() {
+        const v = getImage();
+        status.textContent = v ? (v.startsWith('data:') ? formatBytes(dataUrlBytes(v)) : 'URL') : 'aucune';
+        remove.hidden = !v;
+      },
+    });
+    const rows = [
+      row('Image fond', buttonRow(this.mediaButton('Choisir…', 'image', setImage), remove, status)),
+      row(
+        'Ajustement',
+        this.add(
+          selectField<BackgroundFit>(
+            [
+              ['cover', 'Couvrir'],
+              ['contain', 'Contenir'],
+              ['stretch', 'Étirer'],
+              ['tile', 'Mosaïque'],
+              ['none', 'Taille réelle'],
+            ],
+            getFit,
+            setFit,
+          ),
+        ),
+      ),
+    ];
+    if (getPosition && setPosition) {
+      rows.push(
+        row(
+          'Position',
+          this.add(
+            selectField(
+              [
+                ['center', 'Centre'],
+                ['top', 'Haut'],
+                ['bottom', 'Bas'],
+                ['left', 'Gauche'],
+                ['right', 'Droite'],
+                ['top left', 'Haut gauche'],
+                ['top right', 'Haut droite'],
+                ['bottom left', 'Bas gauche'],
+                ['bottom right', 'Bas droite'],
+              ] as const,
+              getPosition as () => 'center',
+              setPosition,
+            ),
+          ),
+        ),
+      );
+    }
+    return rows;
   }
 
   // ------------------------------------------------------------------ style (single or multi)
@@ -326,6 +547,7 @@ export class PropertiesPanel {
       section(
         'Apparence',
         row('Fond', this.add(colorField(g('background'), set('background'), { allowTransparent: true }))),
+        ...this.backgroundImageRows(g('backgroundImage'), set('backgroundImage'), g('backgroundFit'), set('backgroundFit'), g('backgroundPosition'), set('backgroundPosition')),
         row('Bordure', this.add(numberField(g('borderWidth'), set('borderWidth'), { min: 0, max: 100, suffix: 'px' }))),
         row(
           'Style',
@@ -446,4 +668,21 @@ export class PropertiesPanel {
       ...this.buildStyleSections(ids, () => cur().style, true),
     ];
   }
+}
+
+function dataUrlBytes(src: string): number {
+  const comma = src.indexOf(',');
+  return Math.floor(((src.length - comma - 1) * 3) / 4);
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} o`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} Ko`;
+  return `${(n / 1024 / 1024).toFixed(1).replace('.', ',')} Mo`;
+}
+
+/** IPC errors arrive as "Error invoking remote method '…': Error: message". */
+function cleanError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
 }

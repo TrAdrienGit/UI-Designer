@@ -37,7 +37,8 @@ describe('JsonProjectSerializer', () => {
       }),
     );
     expect(doc.name).toBe('Partial');
-    expect(doc.canvas).toEqual({ ...createEmptyDocument().canvas, height: 300 });
+    // Format 1 files had no screen height: the page was one screen tall.
+    expect(doc.canvas).toEqual({ ...createEmptyDocument().canvas, height: 300, viewportHeight: 300 });
     expect(doc.elements).toHaveLength(3);
     const button = doc.elements[0]!;
     expect(button).toMatchObject({ id: 'b', x: 10, y: 0, hidden: false });
@@ -47,5 +48,32 @@ describe('JsonProjectSerializer', () => {
     expect(button.props.text).toBe('Bouton');
     expect(doc.elements[1]!.id).not.toBe('b');
     expect(doc.elements[2]!.children).toEqual([]);
+  });
+});
+
+describe('JsonProjectSerializer: format 2', () => {
+  it('round-trips links, fixed flags, media and screen height', () => {
+    const s = new JsonProjectSerializer();
+    const box = el('container', 'box', { x: 0, y: 0, width: 100, height: 50 }, [], { fixed: true });
+    const doc = {
+      ...docWith({ ...box, props: { ...box.props, boxTag: 'footer' as const, href: '#top' }, style: { ...box.style, backgroundImage: 'bg.png' } }),
+      canvas: { ...docWith().canvas, height: 3000, viewportHeight: 800 },
+    };
+    const back = s.parse(s.serialize(doc));
+    expect(back.canvas).toMatchObject({ height: 3000, viewportHeight: 800 });
+    expect(back.elements[0]).toMatchObject({ fixed: true, props: { boxTag: 'footer', href: '#top' }, style: { backgroundImage: 'bg.png' } });
+  });
+
+  it('replaces unknown enum values with defaults', () => {
+    const doc = new JsonProjectSerializer().parse(
+      JSON.stringify({
+        format: 'ui-designer-project',
+        version: 2,
+        canvas: { backgroundFit: 'zoom' },
+        elements: [{ type: 'container', id: 'a', props: { boxTag: 'blink' }, style: { backgroundFit: 'huge' } }],
+      }),
+    );
+    expect(doc.canvas.backgroundFit).toBe('cover');
+    expect(doc.elements[0]).toMatchObject({ props: { boxTag: 'div' }, style: { backgroundFit: 'cover' } });
   });
 });

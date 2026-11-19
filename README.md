@@ -6,13 +6,18 @@ listes, des cases à cocher… on les déplace et on les imbrique sur une grille
 génère en direct **un fichier HTML unique** (HTML + CSS + JS intégrés) prêt à être réutilisé, y compris
 par une IA.
 
-![Statut](https://img.shields.io/badge/statut-0.1.0-blue)
+![Statut](https://img.shields.io/badge/statut-0.2.0-blue)
 
 ## Fonctionnalités
 
-- **Boîte à outils** façon Paint.NET : sélection, main, zoom, boîte, séparateur, texte, liste, bouton,
-  champ texte, zone de texte, case à cocher, bouton radio, interrupteur, liste déroulante, curseur,
-  barre de progression, image.
+- **Boîte à outils** façon Paint.NET : sélection, main, zoom, boîte, en-tête, contenu principal,
+  section, pied de page, séparateur, texte, liste, bouton, champ texte, zone de texte, case à cocher,
+  bouton radio, interrupteur, liste déroulante, curseur, barre de progression, image, vidéo.
+- **Dessin à main levée** sur la page : crayon, pinceau, gomme, pot de peinture, ligne, rectangle,
+  ellipse, pipette, calques de dessin ; idéal pour une maquette faite main à transmettre à une IA.
+- **Pages qui défilent** : hauteur de page ≠ hauteur d'écran, éléments **fixes à l'écran**, aperçu
+  défilant.
+- **Liens** (URL, ancres `#id`, mailto), **images de fond**, **vidéos**.
 - **Canevas** avec grille, aimantation, zoom (Ctrl + molette), défilement (Espace + glisser).
 - **Imbrication** : déposer un élément sur une boîte le range dedans (Alt pour l'empêcher) ;
   grouper / dégrouper (Ctrl+G / Ctrl+Maj+G).
@@ -26,8 +31,8 @@ par une IA.
 - Onglets **Conception / Aperçu / Code** : aperçu interactif du fichier exporté et code source en direct.
 - **Formats prédéfinis** : bureau, Full HD, mobile, tablette, HUD Minecraft (échelles GUI 2/3/4),
   fenêtres d'inventaire Minecraft ; fond transparent pour les overlays.
-- **Projets** `.uidesign` (JSON lisible) et **export HTML autonome** : images intégrées en data URL,
-  aucune ressource externe, en-tête qui décrit la mise en page et l'arbre des éléments pour les IA.
+- **Projets** `.uidesign` (JSON lisible) et **export HTML autonome** : images, vidéos et dessins
+  intégrés en data URL, en-tête qui décrit la mise en page et l'arbre des éléments pour les IA.
 - Journalisation dans des fichiers (une session = un fichier, rotation automatique).
 
 ## Télécharger

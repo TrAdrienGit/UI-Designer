@@ -13,6 +13,7 @@ export const IPC = {
   saveProject: 'file:save-project',
   exportHtml: 'file:export-html',
   pickImage: 'file:pick-image',
+  pickVideo: 'file:pick-video',
   revealFile: 'file:reveal',
   publishPreview: 'preview:publish',
   confirmUnsaved: 'dialog:confirm-unsaved',
@@ -48,6 +49,7 @@ export interface DesktopApi {
   saveProject(path: string | null, content: string, suggestedName: string): Promise<string | null>;
   exportHtml(content: string, suggestedName: string): Promise<string | null>;
   pickImage(): Promise<string | null>;
+  pickVideo(): Promise<string | null>;
   revealFile(path: string): void;
   publishPreview(html: string): Promise<string>;
   confirmUnsaved(documentName: string): Promise<UnsavedChoice>;

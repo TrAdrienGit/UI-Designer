@@ -14,6 +14,7 @@ const api: DesktopApi = {
   saveProject: (path, content, suggestedName) => ipcRenderer.invoke(IPC.saveProject, path, content, suggestedName),
   exportHtml: (content, suggestedName) => ipcRenderer.invoke(IPC.exportHtml, content, suggestedName),
   pickImage: () => ipcRenderer.invoke(IPC.pickImage),
+  pickVideo: () => ipcRenderer.invoke(IPC.pickVideo),
   revealFile: (path) => ipcRenderer.send(IPC.revealFile, path),
   publishPreview: (html) => ipcRenderer.invoke(IPC.publishPreview, html),
   confirmUnsaved: (name) => ipcRenderer.invoke(IPC.confirmUnsaved, name),

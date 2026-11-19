@@ -1,6 +1,7 @@
 import {
   DEFAULT_PROPS,
   DEFAULT_STYLE,
+  type BoxTag,
   type ElementProps,
   type ElementStyle,
   type ElementType,
@@ -164,6 +165,30 @@ const definitions: readonly ElementDefinition[] = [
     props: { fit: 'contain', alt: '' },
   },
   {
+    type: 'video',
+    label: 'Vidéo',
+    namePrefix: 'video',
+    defaultWidth: 320,
+    defaultHeight: 180,
+    minWidth: 16,
+    minHeight: 16,
+    canHaveChildren: false,
+    style: { background: '#000000' },
+    props: { fit: 'contain', controls: true, muted: true },
+  },
+  {
+    type: 'drawing',
+    label: 'Calque de dessin',
+    namePrefix: 'drawing',
+    defaultWidth: 320,
+    defaultHeight: 240,
+    minWidth: 4,
+    minHeight: 4,
+    canHaveChildren: false,
+    style: {},
+    props: {},
+  },
+  {
     type: 'progress',
     label: 'Barre de progression',
     namePrefix: 'progress',
@@ -224,4 +249,61 @@ export function defaultStyleFor(type: ElementType): ElementStyle {
 export function defaultPropsFor(type: ElementType): ElementProps {
   const props = { ...DEFAULT_PROPS, ...getDefinition(type).props };
   return { ...props, items: [...props.items] };
+}
+
+/** Ready-made page regions: boxes with a semantic tag and a typical placement. */
+export type BoxPresetId = 'header' | 'main' | 'section' | 'footer';
+
+export interface BoxPreset {
+  readonly id: BoxPresetId;
+  readonly label: string;
+  readonly namePrefix: string;
+  readonly tag: BoxTag;
+  /** Where a simple click places it: full width at the top, at the bottom, or at the click. */
+  readonly placement: 'top' | 'bottom' | 'click';
+  readonly defaultHeight: number;
+  readonly style: Partial<ElementStyle>;
+}
+
+export const BOX_PRESETS: readonly BoxPreset[] = [
+  {
+    id: 'header',
+    label: 'En-tête (header)',
+    namePrefix: 'header',
+    tag: 'header',
+    placement: 'top',
+    defaultHeight: 80,
+    style: { background: '#1f2933', color: '#ffffff', borderWidth: 0, borderRadius: 0 },
+  },
+  {
+    id: 'main',
+    label: 'Contenu principal (main)',
+    namePrefix: 'main',
+    tag: 'main',
+    placement: 'click',
+    defaultHeight: 480,
+    style: { background: 'transparent', borderWidth: 0, borderRadius: 0 },
+  },
+  {
+    id: 'section',
+    label: 'Section',
+    namePrefix: 'section',
+    tag: 'section',
+    placement: 'click',
+    defaultHeight: 320,
+    style: { background: '#f5f7fa', borderWidth: 0, borderRadius: 0 },
+  },
+  {
+    id: 'footer',
+    label: 'Pied de page (footer)',
+    namePrefix: 'footer',
+    tag: 'footer',
+    placement: 'bottom',
+    defaultHeight: 120,
+    style: { background: '#323f4b', color: '#e4e7eb', borderWidth: 0, borderRadius: 0 },
+  },
+];
+
+export function getBoxPreset(id: string): BoxPreset | undefined {
+  return BOX_PRESETS.find((p) => p.id === id);
 }

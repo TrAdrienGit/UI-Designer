@@ -2,7 +2,7 @@
  * Editor state and every user action that changes it. The presentation layer
  * only reads the state and calls these methods; it never mutates the document.
  */
-import { getDefinition } from '../domain/catalog';
+import { getDefinition, type BoxPresetId } from '../domain/catalog';
 import { boundingRect, snap, type Point, type Rect } from '../domain/geometry';
 import {
   createEmptyDocument,
@@ -47,7 +47,18 @@ import {
   type AlignMode,
 } from './transform';
 
-export type ToolId = 'pointer' | 'pan' | 'zoom' | ElementType;
+/** Freehand drawing tools (they paint into drawing elements). */
+export type PaintToolId = 'pencil' | 'brush' | 'eraser' | 'fill' | 'line' | 'rectangle' | 'ellipse' | 'picker';
+export const PAINT_TOOLS: readonly PaintToolId[] = ['pencil', 'brush', 'eraser', 'fill', 'line', 'rectangle', 'ellipse', 'picker'];
+
+export type ToolId = 'pointer' | 'pan' | 'zoom' | ElementType | BoxPresetId | PaintToolId;
+
+/** Values that override an element type's defaults when it is created (box presets...). */
+export interface ElementOverrides {
+  readonly namePrefix?: string;
+  readonly style?: Partial<ElementStyle>;
+  readonly props?: Partial<ElementProps>;
+}
 export type ViewMode = 'design' | 'preview' | 'code';
 
 export interface EditorState {
@@ -220,7 +231,7 @@ export class EditorStore {
    * Creates an element from a rect in canvas coordinates. The parent is the
    * deepest container under the rect's top-left corner unless given.
    */
-  addElement(type: ElementType, absRect: Rect, parentId?: string | null, gridStep = 0): string {
+  addElement(type: ElementType, absRect: Rect, parentId?: string | null, gridStep = 0, overrides: ElementOverrides = {}): string {
     const doc = this.state.document;
     const parent =
       parentId !== undefined ? parentId : hitTest(doc, { x: absRect.x + 1, y: absRect.y + 1 }, { containersOnly: true })?.id ?? null;
@@ -228,13 +239,50 @@ export class EditorStore {
     const def = getDefinition(type);
     const id = this.newId();
     const rel = (v: number): number => (gridStep > 1 ? snap(v, gridStep) : Math.round(v));
-    const element = createElement(
+    const created = createElement(
       type,
       { x: rel(absRect.x - origin.x), y: rel(absRect.y - origin.y), width: absRect.width, height: absRect.height },
       id,
-      uniqueName(doc, def.namePrefix),
+      uniqueName(doc, overrides.namePrefix ?? def.namePrefix),
     );
+    const element: UiElement = {
+      ...created,
+      style: { ...created.style, ...overrides.style },
+      props: { ...created.props, ...overrides.props },
+    };
     this.commit(`Ajouter ${def.label.toLowerCase()}`, insertElement(doc, parent, element), [id]);
+    return id;
+  }
+
+  /**
+   * Stores the pixels of a drawing (one undo step per stroke). With a null id a
+   * new full-page drawing (a "sketch") is created on top of the page (it is
+   * transparent where nothing is painted). `absRect`, when
+   * given, also moves / resizes the drawing (canvas coordinates).
+   */
+  paintDrawing(id: string | null, src: string, absRect?: Rect): string {
+    const doc = this.state.document;
+    if (id === null) {
+      const rect = absRect ?? { x: 0, y: 0, width: doc.canvas.width, height: doc.canvas.height };
+      const newId = this.newId();
+      const created = createElement('drawing', rect, newId, uniqueName(doc, 'sketch'));
+      const element: UiElement = { ...created, props: { ...created.props, src } };
+      this.commit('Dessiner', insertElement(doc, null, element));
+      return newId;
+    }
+    const el = findElement(doc, id);
+    if (!el) return id;
+    let geometry: Partial<UiElement> = {};
+    if (absRect) {
+      const origin = contentOrigin(doc, parentIdOf(doc, id) ?? null);
+      geometry = {
+        x: Math.round(absRect.x - origin.x),
+        y: Math.round(absRect.y - origin.y),
+        width: Math.round(absRect.width),
+        height: Math.round(absRect.height),
+      };
+    }
+    this.commit('Dessiner', updateElement(doc, id, (e) => ({ ...e, ...geometry, props: { ...e.props, src } })));
     return id;
   }
 
@@ -279,7 +327,7 @@ export class EditorStore {
   }
 
   /** Updates geometry / name / flags of one element (values relative to its parent). */
-  updateElement(id: string, patch: Partial<Pick<UiElement, 'name' | 'x' | 'y' | 'width' | 'height' | 'hidden' | 'locked' | 'cssClass'>>): void {
+  updateElement(id: string, patch: Partial<Pick<UiElement, 'name' | 'x' | 'y' | 'width' | 'height' | 'hidden' | 'locked' | 'fixed' | 'cssClass'>>): void {
     const el = findElement(this.state.document, id);
     if (!el) return;
     const def = getDefinition(el.type);
@@ -308,6 +356,7 @@ export class EditorStore {
     const canvas = { ...doc.canvas, ...patch };
     canvas.width = Math.max(16, Math.round(canvas.width));
     canvas.height = Math.max(16, Math.round(canvas.height));
+    canvas.viewportHeight = Math.max(16, Math.round(canvas.viewportHeight));
     this.commit('Modifier le canevas', { ...doc, canvas }, undefined, `canvas:${Object.keys(patch).join(',')}`);
   }
 

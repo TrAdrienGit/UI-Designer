@@ -44,6 +44,8 @@ export interface FileGateway {
   exportHtml(content: string, suggestedName: string): Promise<string | null>;
   /** Lets the user pick an image and returns it as a data URL (so exports stay single-file). */
   pickImage(): Promise<string | null>;
+  /** Lets the user pick a video and returns it as a data URL. */
+  pickVideo(): Promise<string | null>;
 }
 
 /** Shows exported HTML in the live preview. Returns the URL the preview frame should load. */

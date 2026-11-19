@@ -24,6 +24,13 @@ const IMAGE_MIME: Record<string, string> = {
   '.bmp': 'image/bmp',
 };
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
+const VIDEO_MIME: Record<string, string> = {
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.webm': 'video/webm',
+  '.ogv': 'video/ogg',
+};
+const MAX_VIDEO_BYTES = 64 * 1024 * 1024;
 
 // ------------------------------------------------------------------ logging
 
@@ -123,10 +130,18 @@ function createWindow(): void {
   mainWindow.webContents.on('render-process-gone', (_event, details) => log.error('Renderer process gone', details));
   // Links never open inside the app.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/.test(url)) void shell.openExternal(url);
+    if (/^(https?|mailto):/.test(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
   mainWindow.webContents.on('will-navigate', (event) => event.preventDefault());
+  // Links clicked in the preview frame: anchors (#id) scroll inside the page,
+  // web links open in the system browser instead of replacing the preview.
+  mainWindow.webContents.on('will-frame-navigate', (event) => {
+    if (event.isMainFrame || event.url.startsWith(`${PREVIEW_SCHEME}:`)) return;
+    event.preventDefault();
+    if (/^(https?|mailto):/.test(event.url)) void shell.openExternal(event.url);
+    log.info('Preview link', { url: event.url });
+  });
   void mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
 }
 
@@ -228,6 +243,23 @@ function registerIpc(): void {
     if (info.size > MAX_IMAGE_BYTES) throw new Error('Image trop lourde (15 Mo maximum)');
     const data = await readFile(path);
     log.info('Image embedded', { path, bytes: info.size });
+    return `data:${mime};base64,${data.toString('base64')}`;
+  });
+
+  ipcMain.handle(IPC.pickVideo, async () => {
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      title: 'Choisir une vidéo',
+      filters: [{ name: 'Vidéos (MP4, WebM, Ogg)', extensions: Object.keys(VIDEO_MIME).map((e) => e.slice(1)) }],
+      properties: ['openFile'],
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    const path = result.filePaths[0];
+    const mime = VIDEO_MIME[extname(path).toLowerCase()];
+    if (!mime) throw new Error('Format vidéo non supporté (MP4, WebM ou Ogg)');
+    const info = await stat(path);
+    if (info.size > MAX_VIDEO_BYTES) throw new Error('Vidéo trop lourde (64 Mo maximum) : utilisez plutôt une URL');
+    const data = await readFile(path);
+    log.info('Video embedded', { path, bytes: info.size });
     return `data:${mime};base64,${data.toString('base64')}`;
   });
 

@@ -8,7 +8,7 @@ import { getDefinition } from '../../domain/catalog';
 import type { UiElement } from '../../domain/model';
 import { canHaveChildren, findElement, isDescendantOf, parentIdOf, siblingsOf } from '../../domain/tree';
 import { h } from '../dom';
-import { icon, typeIcon } from '../icons';
+import { elementIcon, icon } from '../icons';
 
 type DropPosition = 'above' | 'below' | 'inside';
 
@@ -80,7 +80,7 @@ export class LayersPanel {
         'data-id': el.id,
       },
       twisty,
-      h('span', { class: 'layer-icon', html: icon(typeIcon(el.type), 15) }),
+      h('span', { class: 'layer-icon', html: icon(elementIcon(el), 15) }),
       name,
       eye,
       lock,

@@ -41,7 +41,7 @@ describe('HtmlExporter', () => {
   });
 
   it('supports transparent canvases (HUD) and can omit the overview', () => {
-    const doc = { ...docWith(), canvas: { width: 480, height: 270, background: '#000', transparent: true } };
+    const doc = { ...docWith(), canvas: { ...docWith().canvas, width: 480, height: 270, background: '#000', transparent: true } };
     const out = new HtmlExporter({ includeOverview: false }).exportHtml(doc);
     expect(out).toContain('body { background: transparent; }');
     expect(out).toContain('#uid-canvas { width: 480px; height: 270px; background: transparent; }');
@@ -53,5 +53,56 @@ describe('HtmlExporter', () => {
     const out = new HtmlExporter().exportHtml(doc);
     const comment = out.slice(out.indexOf('<!--'), out.indexOf('-->') + 3);
     expect(comment).toContain('evil - -> <script>');
+  });
+});
+
+describe('HtmlExporter: scrolling pages, links, media', () => {
+  it('exports fixed elements with page coordinates and keeps their children relative', () => {
+    const child = el('button', 'menu', { x: 5, y: 5, width: 50, height: 20 }, [], { fixed: true });
+    const header = el('container', 'header', { x: 10, y: 20, width: 500, height: 80 }, [child], { fixed: true });
+    const panel = el('container', 'panel', { x: 100, y: 300, width: 300, height: 300 }, [
+      el('text', 'note', { x: 7, y: 8, width: 50, height: 20 }, [], { fixed: true }),
+    ]);
+    const doc = { ...docWith(header, panel), canvas: { ...docWith().canvas, height: 2000 } };
+    const out = new HtmlExporter().exportHtml(doc);
+    expect(out).toMatch(/#header \{ position: fixed; left: 10px; top: 20px; .*z-index: 100;/);
+    expect(out).toMatch(/#menu \{ position: absolute; left: 5px; top: 5px;/);
+    // panel has a 1px border: 100 + 1 + 7, 300 + 1 + 8
+    expect(out).toMatch(/#note \{ position: fixed; left: 108px; top: 309px;/);
+    expect(out).toContain('html { scroll-behavior: smooth; }');
+    expect(out).toContain('Screen   : 1280 x 720 px (the page is taller than the screen: it scrolls vertically)');
+    expect(out).toContain('[fixed]');
+  });
+
+  it('describes links and semantic tags and leaves guide drawings out', () => {
+    const header = el('container', 'top', { x: 0, y: 0, width: 100, height: 50 });
+    const link = el('button', 'go', { x: 0, y: 0, width: 50, height: 20 });
+    const guide = el('drawing', 'trace', { x: 0, y: 0, width: 100, height: 100 });
+    const sketch = el('drawing', 'sketch', { x: 0, y: 0, width: 100, height: 100 });
+    const doc = docWith(
+      { ...header, props: { ...header.props, boxTag: 'header' } },
+      { ...link, props: { ...link.props, href: '#top', newTab: true } },
+      { ...guide, props: { ...guide.props, src: 'data:image/png;base64,AA', guide: true } },
+      { ...sketch, props: { ...sketch.props, src: 'data:image/png;base64,BB' } },
+    );
+    const out = new HtmlExporter().exportHtml(doc);
+    expect(out).toContain('<header id="top" class="uid-container">');
+    expect(out).toContain('#go  button  0,0  50x20  "Bouton"  -> #top (new tab)');
+    expect(out).toContain('#trace  drawing  0,0  100x100  hand-drawn sketch (PNG)  [guide, not exported]');
+    expect(out).not.toContain('id="trace"');
+    expect(out).toContain('<div id="sketch" class="uid-drawing"><img src="data:image/png;base64,BB"');
+    expect(out).toContain('Drawings : "drawing" elements are hand-drawn PNG layers');
+  });
+
+  it('exports videos and canvas background images', () => {
+    const video = el('video', 'clip', { x: 0, y: 0, width: 320, height: 180 });
+    const doc = {
+      ...docWith({ ...video, props: { ...video.props, src: 'intro.webm', autoplay: true, muted: true } }),
+      canvas: { ...docWith().canvas, backgroundImage: 'data:image/png;base64,CC', backgroundFit: 'cover' as const },
+    };
+    const out = new HtmlExporter().exportHtml(doc);
+    expect(out).toContain('<video id="clip" src="intro.webm" controls autoplay muted playsinline class="uid-video"></video>');
+    expect(out).toContain('video intro.webm (autoplay muted controls)');
+    expect(out).toContain('background-image: url("data:image/png;base64,CC");');
   });
 });

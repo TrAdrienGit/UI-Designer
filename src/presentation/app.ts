@@ -16,7 +16,10 @@ import { byId, debounce, h, isTyping } from './dom';
 import { icon, typeIcon } from './icons';
 import { LayersPanel } from './panels/layersPanel';
 import { PropertiesPanel } from './panels/propertiesPanel';
-import { TOOLS } from './tools';
+import { PaintController } from './paint/paintController';
+import { PaintSettings } from './paint/paintSettings';
+import { buildColorSwatches, PaintOptionsBar } from './paint/paintWidgets';
+import { isPaintTool, keyLabel, TOOLS } from './tools';
 import { CodeView } from './views/codeView';
 import { PreviewView } from './views/previewView';
 import { closeContextMenu, showContextMenu, showModal, toast, type MenuItem } from './widgets';
@@ -38,6 +41,8 @@ export class App {
   private readonly layers: LayersPanel;
   private readonly preview: PreviewView;
   private readonly code: CodeView;
+  private readonly paintSettings = new PaintSettings();
+  private readonly paintOptions: PaintOptionsBar;
   private readonly toolButtons = new Map<ToolId, HTMLElement>();
   private readonly toggles = new Map<string, HTMLElement>();
   private pointer: Point | null = null;
@@ -56,6 +61,8 @@ export class App {
     document.head.append(h('style', {}, BASE_CSS));
 
     this.canvas = new CanvasView(byId('design-view'));
+    this.paintOptions = new PaintOptionsBar(this.paintSettings);
+    byId('design-view').append(this.paintOptions.element);
     this.properties = new PropertiesPanel(byId('properties'), this.store, deps.host.files, log.child('properties'));
     this.layers = new LayersPanel(byId('layers'), this.store);
     this.preview = new PreviewView(byId('preview-view'), deps.host.preview, log.child('preview'));
@@ -75,6 +82,7 @@ export class App {
         },
       },
       log.child('canvas'),
+      new PaintController(this.canvas, this.store, this.paintSettings, log.child('paint')),
     );
 
     this.registerCommands();
@@ -122,7 +130,8 @@ export class App {
   private renderLiveViews(state: EditorState): void {
     const html = this.deps.exporter.exportHtml(state.document);
     if (state.view === 'preview') {
-      void this.preview.show(html, state.document.canvas.width, state.document.canvas.height, state.document.canvas.transparent);
+      const { canvas } = state.document;
+      void this.preview.show(html, canvas.width, Math.min(canvas.viewportHeight, canvas.height), canvas.transparent, canvas.height);
     } else if (state.view === 'code') {
       this.code.show(html);
     }
@@ -130,6 +139,8 @@ export class App {
 
   private renderToolbar(state: EditorState): void {
     for (const [tool, btn] of this.toolButtons) btn.classList.toggle('active', state.tool === tool);
+    this.paintOptions.show(isPaintTool(state.tool) ? state.tool : null);
+    this.canvas.viewport.dataset['tool'] = isPaintTool(state.tool) ? 'paint' : state.tool;
     const setDisabled = (id: string, disabled: boolean): void => {
       const btn = this.toggles.get(id);
       if (btn) (btn as HTMLButtonElement).disabled = disabled;
@@ -165,7 +176,8 @@ export class App {
     }
     byId('status-selection').textContent = sel;
     const { canvas } = state.document;
-    byId('status-doc').textContent = `${countElements(state.document)} éléments · ${canvas.width} × ${canvas.height} · ${Math.round(state.zoom * 100)} %`;
+    const page = canvas.height > canvas.viewportHeight ? ` (écran ${canvas.viewportHeight})` : '';
+    byId('status-doc').textContent = `${countElements(state.document)} éléments · ${canvas.width} × ${canvas.height}${page} · ${Math.round(state.zoom * 100)} %`;
     byId('status-file').textContent = (state.filePath ?? 'Non enregistré') + (state.dirty ? ' •' : '');
   }
 
@@ -299,7 +311,7 @@ export class App {
         if (group) host.append(h('div', { class: 'toolbox-sep' }));
         group = tool.group;
       }
-      const title = tool.key ? `${tool.label} (${tool.key.toUpperCase()})` : tool.label;
+      const title = tool.key ? `${tool.label} (${keyLabel(tool.key)})` : tool.label;
       const btn = h('button', {
         class: 'tool-btn',
         type: 'button',
@@ -311,6 +323,7 @@ export class App {
       this.toolButtons.set(tool.id, btn);
       host.append(btn);
     }
+    host.append(h('div', { class: 'toolbox-sep' }), buildColorSwatches(this.paintSettings));
   }
 
   private buildToolbar(): void {
@@ -398,11 +411,25 @@ export class App {
         this.store.nudgeSelection(arrow[0] * step, arrow[1] * step);
         return;
       }
-      if (!e.shiftKey && e.key.length === 1) {
-        const tool = TOOLS.find((t) => t.key === e.key.toLowerCase());
-        if (tool && !this.interaction.busy) {
+      if (e.key.length === 1 && !this.interaction.busy) {
+        const key = (e.shiftKey ? 'shift+' : '') + e.key.toLowerCase();
+        const tool = TOOLS.find((t) => t.key === key);
+        if (tool) {
           e.preventDefault();
           this.store.setTool(tool.id);
+          return;
+        }
+        if (!e.shiftKey && e.key.toLowerCase() === 'x') {
+          e.preventDefault();
+          this.paintSettings.swapColors();
+          return;
+        }
+        // [ and ] change the brush size (layout independent).
+        if (!e.shiftKey && (e.code === 'BracketLeft' || e.code === 'BracketRight') && isPaintTool(state.tool)) {
+          e.preventDefault();
+          const size = this.paintSettings.options.size;
+          const step = size >= 20 ? 5 : 1;
+          this.paintSettings.update({ size: size + (e.code === 'BracketRight' ? step : -step) });
         }
       }
     });
@@ -465,8 +492,12 @@ export class App {
 
   private showShortcuts(): void {
     const rows: [string, string][] = [
-      ...TOOLS.filter((t) => t.key).map((t): [string, string] => [t.key!.toUpperCase(), `Outil : ${t.label}`]),
+      ...TOOLS.filter((t) => t.key).map((t): [string, string] => [keyLabel(t.key!), `Outil : ${t.label}`]),
+      ['X', 'Inverser les couleurs de dessin'],
+      ['[ / ]', 'Taille du crayon / pinceau / gomme'],
+      ['Clic droit (dessin)', 'Peindre avec la couleur secondaire'],
       ['Ctrl + clic-glisser', 'Dessiner en gardant l’outil actif'],
+      ['Clic (en-tête, pied, section)', 'Région sur toute la largeur'],
       ['Maj (en dessinant)', 'Carré / garder les proportions'],
       ['Maj (en déplaçant)', 'Contraindre à l’horizontale / verticale'],
       ['Alt (en déplaçant)', 'Ne pas changer de boîte parente'],
