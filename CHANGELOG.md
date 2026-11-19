@@ -1,5 +1,12 @@
 # Historique des versions
 
+## Non publié
+
+- Licence domaine public (The Unlicense).
+- Icône de l'application.
+- Installeur Windows (NSIS) et version portable ; AppImage Linux construite par GitHub Actions.
+- Workflow de release : un tag `vX.Y.Z` construit et publie les installeurs.
+
 ## 0.1.0 — 2026-11-19
 
 Première version.

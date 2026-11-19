@@ -23,7 +23,8 @@ node node_modules/electron/install.js
 | `npm run typecheck` | Vérification TypeScript stricte |
 | `npm test` | Tests unitaires (Vitest) |
 | `npm run check` | Typecheck + tests |
-| `npm run dist` | Build de production + installeur NSIS et version portable dans `release/` |
+| `npm run dist` | Build de production + installeur NSIS et version portable Windows dans `release/` |
+| `npm run dist:linux` | AppImage Linux (uniquement sous Linux, sinon via GitHub Actions : voir [release.md](release.md)) |
 
 `scripts/build.mjs` regroupe les trois points d'entrée avec esbuild (`src/main/main.ts`,
 `src/preload/preload.ts`, `src/presentation/index.ts`) et copie `static/` dans `dist/renderer/`.

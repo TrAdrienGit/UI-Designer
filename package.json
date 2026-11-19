@@ -3,6 +3,13 @@
   "productName": "UI Designer",
   "version": "0.1.0",
   "description": "Desktop tool to draw web interfaces and HUDs visually and export them as a single, AI-friendly HTML file.",
+  "license": "Unlicense",
+  "author": "TrAdrienGit",
+  "homepage": "https://github.com/TrAdrienGit/UI-Designer",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TrAdrienGit/UI-Designer.git"
+  },
   "main": "dist/main/main.js",
   "private": true,
   "scripts": {
@@ -12,7 +19,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check": "npm run typecheck && npm run test",
-    "dist": "node scripts/build.mjs --production && electron-builder --win"
+    "dist": "node scripts/build.mjs --production && electron-builder --win",
+    "dist:linux": "node scripts/build.mjs --production && electron-builder --linux"
   },
   "build": {
     "appId": "io.github.tradriengit.uidesigner",
@@ -39,8 +47,22 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    }
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "UI-Designer-${version}-Setup.${ext}",
+      "createDesktopShortcut": true,
+      "shortcutName": "UI Designer"
+    },
+    "portable": {
+      "artifactName": "UI-Designer-${version}-Portable.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development",
+      "artifactName": "UI-Designer-${version}-${arch}.${ext}"
+    },
+    "publish": null
   },
   "devDependencies": {
     "@types/node": "26.6.6",

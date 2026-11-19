@@ -30,7 +30,13 @@ par une IA.
   aucune ressource externe, en-tête qui décrit la mise en page et l'arbre des éléments pour les IA.
 - Journalisation dans des fichiers (une session = un fichier, rotation automatique).
 
-## Démarrer
+## Télécharger
+
+Les installeurs sont publiés dans les [Releases](https://github.com/TrAdrienGit/UI-Designer/releases) :
+`UI-Designer-x.y.z-Setup.exe` (installeur Windows), `UI-Designer-x.y.z-Portable.exe` (sans installation)
+et `UI-Designer-x.y.z-x86_64.AppImage` (Linux). Voir [docs/release.md](docs/release.md).
+
+## Démarrer depuis les sources
 
 Prérequis : [Node.js](https://nodejs.org/) 22 ou plus récent.
 
@@ -46,6 +52,8 @@ Créer l'installeur et la version portable Windows (dans `release/`) :
 ```bash
 npm run dist
 ```
+
+Publier une release Windows + Linux : pousser un tag `vX.Y.Z` (voir [docs/release.md](docs/release.md)).
 
 ## Le fichier exporté
 
@@ -68,9 +76,15 @@ Détails : [docs/export-format.md](docs/export-format.md).
 | [docs/user-guide.md](docs/user-guide.md) | Outils, raccourcis, cas d'usage (pages, HUD Minecraft) |
 | [docs/export-format.md](docs/export-format.md) | Format du HTML exporté et du projet `.uidesign` |
 | [docs/architecture.md](docs/architecture.md) | Architecture en couches, flux de données, choix techniques |
-| [docs/development.md](docs/development.md) | Compilation, tests, logs, débogage, publication |
+| [docs/development.md](docs/development.md) | Compilation, tests, logs, débogage |
+| [docs/release.md](docs/release.md) | Installeurs Windows / Linux, publication d'une release GitHub |
 | [CHANGELOG.md](CHANGELOG.md) | Historique des versions |
 
 ## Technologies
 
 Electron, TypeScript (sans framework d'interface), esbuild, Vitest, electron-builder.
+
+## Licence
+
+Domaine public ([The Unlicense](LICENSE)) : vous pouvez copier, modifier, redistribuer et vendre ce
+logiciel, sans aucune restriction ni obligation de citer l'auteur.
