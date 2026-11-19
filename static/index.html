@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; frame-src uidpreview: blob:; connect-src 'self'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UI Designer</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <header id="toolbar" class="toolbar" role="toolbar" aria-label="Barre d'outils"></header>
+    <div id="workspace" class="workspace">
+      <nav id="toolbox" class="toolbox" aria-label="Outils"></nav>
+      <main class="stage">
+        <section id="design-view" class="view design-view" aria-label="Conception"></section>
+        <section id="preview-view" class="view preview-view" aria-label="Aperçu" hidden></section>
+        <section id="code-view" class="view code-view" aria-label="Code" hidden></section>
+      </main>
+      <aside class="side">
+        <section class="panel panel-properties">
+          <h2 class="panel-head">Propriétés</h2>
+          <div id="properties" class="panel-scroll"></div>
+        </section>
+        <section class="panel panel-layers">
+          <h2 class="panel-head">Calques</h2>
+          <div id="layers" class="panel-scroll layers"></div>
+        </section>
+      </aside>
+    </div>
+    <footer class="statusbar">
+      <span id="status-tool"></span>
+      <span id="status-pointer" class="mono"></span>
+      <span id="status-selection"></span>
+      <span class="spacer"></span>
+      <span id="status-doc"></span>
+      <span id="status-file" class="mono"></span>
+    </footer>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

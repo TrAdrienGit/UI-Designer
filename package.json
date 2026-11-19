@@ -1,0 +1,58 @@
+{
+  "name": "ui-designer",
+  "productName": "UI Designer",
+  "version": "0.1.0",
+  "description": "Desktop tool to draw web interfaces and HUDs visually and export them as a single, AI-friendly HTML file.",
+  "main": "dist/main/main.js",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/build.mjs && electron .",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run test",
+    "dist": "node scripts/build.mjs --production && electron-builder --win"
+  },
+  "build": {
+    "appId": "io.github.tradriengit.uidesigner",
+    "productName": "UI Designer",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "fileAssociations": [
+      {
+        "ext": "uidesign",
+        "name": "UI Designer project",
+        "description": "UI Designer project"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "26.6.6",
+    "electron": "45.3.4",
+    "electron-builder": "26.18.0",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2",
+    "vitest": "5.1.1"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "electron-winstaller@5.4.0": true,
+    "electron@45.3.4": true
+  }
+}
